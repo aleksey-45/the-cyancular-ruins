@@ -6,8 +6,8 @@ func run(tree: SceneTree) -> void:
 	_mvp()
 	_duel_spawns()
 	_team_setup()
-	_team_respawn(tree)
-	_sparse_spawn_map(tree)
+	_team_respawn()
+	_sparse_spawn_map()
 
 func _team_health(tree: SceneTree) -> void:
 	var parent := world_with_walls(tree, 16, 16, {})
@@ -65,24 +65,26 @@ func _team_rules() -> void:
 	expect(TeamRules.disadvantaged_team(even) == 0 and TeamRules.score_bonus(1, even) == 0,
 			"equal teams have no compensation")
 
+## 该测试覆盖胜队内部的 MVP 评选、同分时的顺序以及平局不评 MVP 的规则。
 func _mvp() -> void:
 	var host := arena(WorldSpec.TEAM, [1, 2, 3, 4], {1: 1, 2: 1, 3: 2, 4: 2}, {})
 	var world := host.world
 	for id: int in world.players:
-		world._stats[id]["kills"] = 50 if id == 1 else (20 if id == 3 else 1)
+		world.rules.stats[id]["kills"] = 50 if id == 1 else (20 if id == 3 else 1)
+	world.rules.phase = MatchRules.Phase.MATCH_OVER
 	world.rules.winner = 2
 	expect(arena_round(world)["mvp"] == 3, "the team MVP comes from the winning team")
-	world._stats[4]["kills"] = 20
+	world.rules.stats[4]["kills"] = 20
 	expect(arena_round(world)["mvp"] == 3, "an exact statistical tie is decided by role order")
 	world.rules.winner = 0
 	expect(arena_round(world)["mvp"] == 0, "a drawn team match has no MVP")
-	host.close()
+	host.world.close()
 
 func _duel_spawns() -> void:
 	var host := arena(WorldSpec.DUEL, [1, 2], {}, {"player_collision": true})
 	var world := host.world
 	var sides := SpawnPicker.respawn_cells(world.spec.map)
-	expect(world.problem.is_empty(), "the duel loads the multiplayer spawn points")
+	expect(world.spec.problem().is_empty(), "the duel loads the multiplayer spawn points")
 	expect(players_on_map_points(world, [1], sides[1]) and players_on_map_points(world, [2], sides[2]),
 			"duelists open on their respective marked sides")
 	world.rules.phase = MatchRules.Phase.PLAYING
@@ -109,18 +111,18 @@ func _duel_spawns() -> void:
 	host.fixed_step()
 	expect(world.rules.round_number == 2 and players_on_map_points(world, [1], sides[2])
 			and players_on_map_points(world, [2], sides[1]), "duelists use the opposite map sides in round two")
-	host.close()
+	host.world.close()
 
 func _team_setup() -> void:
 	var disabled := WeaponRegistry.enabled_ids()
 	var teams := {1: 1, 2: 1, 3: 2}
 	var roles := [1, 2, 3]
-	var invalid := arena(WorldSpec.TEAM, roles, teams, {"disabled_weapons": disabled}).world
-	expect(not invalid.problem.is_empty() and invalid.combat == null, "disabling all weapons rejects the match")
+	var invalid := WorldSpec.arena(CyrmMap.load_file("res://maps/demo.cyrm"), WorldSpec.TEAM, roles, teams, {"disabled_weapons": disabled}, 0)
+	expect(not invalid.problem().is_empty(), "disabling all weapons rejects the match")
 	disabled.erase(WeaponType.PISTOL)
 	var host := arena(WorldSpec.TEAM, roles, teams, {"disabled_weapons": disabled}, "res://maps/demo.cyrm")
 	var world := host.world
-	expect(world.problem.is_empty(), "the team match loads and validates its map")
+	expect(world.spec.problem().is_empty(), "the team match loads and validates its map")
 	for p: Player in world.players.values():
 		expect(p.collision_mask == CombatProfiles.Layer.TERRAIN,
 				"players collide with terrain only; NPC contact is damage-only")
@@ -132,7 +134,7 @@ func _team_setup() -> void:
 			"team max HP follows the fixed roster")
 	expect(int(world.rules.scores.get(2, 0)) == 1 and int(world.rules.scores.get(1, 0)) == 0,
 			"the smaller team starts with its score bonus")
-	expect(world.rules.team_counts == {1: 2, 2: 1}, "the roster counts are frozen at setup")
+	expect(world.spec.team_counts == {1: 2, 2: 1}, "the roster counts are frozen at setup")
 	var sides := SpawnPicker.respawn_cells(world.spec.map)
 	expect(players_on_map_points(world, [1, 2], sides[1]) and players_on_map_points(world, [3], sides[2]),
 			"each team opens on distinct points on its own side")
@@ -161,12 +163,12 @@ func _team_setup() -> void:
 	host.enqueue(MatchWorld.Command.LEAVE, 3)
 	host.fixed_step()
 	expect(world.tick == final_tick and arena_round(world) == result, "terminal matches keep their committed result")
-	var epoch := host._buffers[1].epoch
+	var epoch := host.remote[1].epoch
 	host.accept_input(1, [[], [[1, epoch, final_tick + 1, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]]], 0)
-	expect(host._buffers[1].actions.is_empty(), "the final result stops accepting input")
-	host.close()
+	expect(host.remote[1].actions.is_empty(), "the final result stops accepting input")
+	host.world.close()
 
-func _win_team_round(host: MatchSession) -> void:
+func _win_team_round(host: MatchHost) -> void:
 	var world := host.world
 	for kill in TeamRules.kills_to_win(3):
 		world.rules.score_down(3, 1)
@@ -175,25 +177,18 @@ func _win_team_round(host: MatchSession) -> void:
 	host.fixed_step()
 
 ## 用固定随机种子验证安全点间的抽选，并检查开启碰撞时阵亡角色会让出占用的点。
-
-func _team_respawn(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_from_solid(tree, 125, 75, func(sx: int, sy: int) -> bool: return sy >= 74 * 4)
+func _team_respawn() -> void:
 	var info := CyrmMap.load_file("res://maps/demo.cyrm")
 	var respawn := SpawnPicker.respawn_cells(info)
-	var rules := MatchRules.new(RandomNumberGenerator.new())
-	rules.setup(PvpSession.MODE_TEAM, [1, 2, 3], {1: 1, 2: 1, 3: 2}, info, {"player_collision": true})
-	var ally := player(parent, 1)
-	ally.team = 1
-	ally.position = CyrmMap.world_position(respawn[1][0])
-	var enemy := player(parent, 3)
-	enemy.team = 2
-	enemy.position = CyrmMap.world_position(respawn[1][1])
-	var players := {1: ally, 3: enemy}
+	var spec := WorldSpec.arena(info, WorldSpec.TEAM, [1, 2, 3], {1: 1, 2: 1, 3: 2}, {"player_collision": true}, 0)
+	var match_world := MatchWorld.new(spec)
+	var rules := match_world.rules
+	match_world.players[1].position = CyrmMap.world_position(respawn[1][0])
+	match_world.players[3].position = CyrmMap.world_position(respawn[1][1])
 	var picked := {}
-	rules._rng.seed = 1729
+	match_world.combat.rng.seed = 1729
 	for i in 16:
-		picked[rules.spawn_for(players, 2)] = true
+		picked[rules.spawn_for(2)] = true
 	var size: Vector2i = info.size
 	expect(picked.size() > 1 and picked.keys().all(func(cell: Vector2i) -> bool:
 		var distance := ToroidalGrid.toroidal_dist(cell, respawn[1][1], size.x, size.y)
@@ -201,23 +196,20 @@ func _team_respawn(tree: SceneTree) -> void:
 			"team respawn varies among free points at least eight cells from the enemy")
 	# 让队友占用所有己方复活点，比较启用和关闭角色碰撞时的选点结果。
 	for index in respawn[1].size():
-		var mate := player(parent, 10 + index)
-		mate.team = 1
+		var mate := match_world.combat.add_player(10 + index, 1)
 		mate.position = CyrmMap.world_position(respawn[1][index])
 		mate.sync_collision_geometry()
-		players[10 + index] = mate
-	expect(rules.spawn_for(players, 2) == SpawnPicker.NO_CELL,
+	expect(rules.spawn_for(2) == SpawnPicker.NO_CELL,
 			"a fully occupied team side reports no point instead of overlapping")
-	rules.player_collision = false
-	expect(respawn[1].has(rules.spawn_for(players, 2)), "without blocking, occupancy never delays a team respawn")
-	rules.player_collision = true
-	players[10 + respawn[1].size() - 1].force_down()
-	expect(rules.spawn_for(players, 2) == respawn[1].back(), "a downed player frees the only available point")
-	cleanup()
+	spec.options["player_collision"] = false
+	expect(respawn[1].has(rules.spawn_for(2)), "without blocking, occupancy never delays a team respawn")
+	spec.options["player_collision"] = true
+	match_world.players[10 + respawn[1].size() - 1].force_down()
+	expect(rules.spawn_for(2) == respawn[1].back(), "a downed player frees the only available point")
+	match_world.close()
 
-func _sparse_spawn_map(tree: SceneTree) -> void:
+func _sparse_spawn_map() -> void:
 	var size := Vector2i(18, 4)
-	var parent := world_from_solid(tree, size.x, size.y, func(_x: int, y: int) -> bool: return y >= 10)
 	var info := CyrmMap.create(size * 4)
 	var ground: PackedInt32Array = info.layers[CyrmMap.SCENE]
 	var wall := CyrmMap.tile_value(wall_texture())
@@ -225,28 +217,26 @@ func _sparse_spawn_map(tree: SceneTree) -> void:
 	info.points[0] = {"kind": "player", "cell": Vector2i(2, 6)}
 	info.points[1] = {"kind": "player2", "cell": Vector2i(66, 6)}
 	for x: int in [2, 10, 66]: info.points[x] = {"kind": "respawn", "side": 1, "cell": Vector2i(x, 6)}
-	expect(not MatchRules.new(RandomNumberGenerator.new()).setup(PvpSession.MODE_PVP, [1, 2], {}, info, {}).is_empty(),
+	expect(not WorldSpec.arena(info, WorldSpec.DUEL, [1, 2], {}, {}, 0).problem().is_empty(),
 			"a duel with a missing side rejects the map even when both solo markers exist")
-	expect(not MatchRules.new(RandomNumberGenerator.new()).setup(PvpSession.MODE_TEAM, [1, 2], {1: 1, 2: 2}, info, {}).is_empty(),
+	expect(not WorldSpec.arena(info, WorldSpec.TEAM, [1, 2], {1: 1, 2: 2}, {}, 0).problem().is_empty(),
 			"a team match rejects a map with an empty side")
-	expect(not MatchRules.new(RandomNumberGenerator.new()).setup(PvpSession.MODE_ROYALE, [1, 2, 3, 4], {}, info, {}).is_empty(),
+	expect(not WorldSpec.arena(info, WorldSpec.ROYALE, [1, 2, 3, 4], {}, {}, 0).problem().is_empty(),
 			"a Royale with too few marked points rejects the map")
-	var rules := MatchRules.new(RandomNumberGenerator.new())
-	expect(not rules.setup(PvpSession.MODE_ROYALE, [1], {}, info, {}).is_empty()
-			and not rules.setup(PvpSession.MODE_ROYALE, [1, 2, 3], {}, info, {"max_players": 2}).is_empty(),
+	expect(not WorldSpec.arena(info, WorldSpec.ROYALE, [1], {}, {}, 0).problem().is_empty()
+			and not WorldSpec.arena(info, WorldSpec.ROYALE, [1, 2, 3], {}, {"max_players": 2}, 0).problem().is_empty(),
 			"Royale admission respects both the minimum roster and the configured room cap")
-	var problem := rules.setup(PvpSession.MODE_ROYALE, [1, 2], {}, info, {"player_collision": true})
+	var spec := WorldSpec.arena(info, WorldSpec.ROYALE, [1, 2], {}, {"player_collision": true}, 0)
+	var problem := spec.problem()
 	expect(problem.is_empty(), "a Royale can use points that all come from the same side")
 	if problem.is_empty():
-		var self_player := player(parent, 1)
-		var enemy := player(parent, 2)
-		self_player.position = CyrmMap.world_position(Vector2i(10, 6))
-		enemy.position = CyrmMap.world_position(Vector2i(70, 6))
-		expect(rules.spawn_for({1: self_player, 2: enemy}, 1) == Vector2i(10, 6),
+		var match_world := MatchWorld.new(spec)
+		match_world.players[1].position = CyrmMap.world_position(Vector2i(10, 6))
+		match_world.players[2].position = CyrmMap.world_position(Vector2i(70, 6))
+		expect(match_world.rules.spawn_for(1) == Vector2i(10, 6),
 				"with no safe point, pick the farthest across the seam and ignore the moving player's own position")
+		match_world.close()
 	info.points[75] = {"kind": "respawn", "side": 2, "cell": Vector2i(2, 6)}
-	expect(not MatchRules.new(RandomNumberGenerator.new()).setup(PvpSession.MODE_PVP, [1, 2], {}, info, {}).is_empty(),
+	expect(not WorldSpec.arena(info, WorldSpec.DUEL, [1, 2], {}, {}, 0).problem().is_empty(),
 			"a point marked on both sides cannot start a duel")
 	cleanup()
-
-## 在同一个测试场景中验证摄像机的初始偏移、目标跟随、抖动和跨地图边缘的行为。

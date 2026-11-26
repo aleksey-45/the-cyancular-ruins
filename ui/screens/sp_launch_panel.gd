@@ -5,8 +5,8 @@ extends PanelContainer
 
 signal play_requested(path: String, disabled_weapons: Array[int])
 
-const PANEL_PAD := Vector2(UiDesign.SP_9, UiDesign.SP_6)      # 64 × 32:内衬
-const PAGE_MIN_W := UiDesign.SP_10 * 7                        # 560:内容最小宽(面板宽 = 560 + 两侧内衬)
+const PANEL_PAD := Vector2(UiDesign.SP_9, UiDesign.SP_6)      # 水平和垂直内边距。
+const PAGE_MIN_W := UiDesign.SP_10 * 7                        # 内容的最小宽度，面板还会加上两侧内边距。
 const BLOCK_GAP := UiDesign.SP_6                              # 32:大块间距
 const SECTION_GAP := UiDesign.SP_4                            # 16:分区标题条与其内容之间
 const BUTTON_SIZE := Vector2(UiDesign.SP_10 * 5 + UiDesign.SP_5 - UiDesign.SP_1,
@@ -23,8 +23,7 @@ var _status: Label
 
 
 func _ready() -> void:
-	UiDesign.skin_menu_panel(self, PANEL_PAD)
-	var body := get_node("Body") as Container
+	var body := UiDesign.skin_menu_panel(self, PANEL_PAD)
 	var page := VBoxContainer.new()
 	page.name = "Page"
 	page.custom_minimum_size.x = PAGE_MIN_W

@@ -85,7 +85,7 @@ func _exit_tree() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and is_node_ready() and not _closing:
-		_files.confirm_discard(_leave.bind(true))
+		_files.confirm_discard.call_deferred(_leave.bind(true))
 
 func _request_exit() -> void:
 	_files.confirm_discard(_leave.bind(false))
@@ -107,9 +107,8 @@ func _build_ui() -> void:
 	_toolbar.open_requested.connect(_files.open_dialog)
 	_toolbar.save_requested.connect(_files.save)
 	_toolbar.save_as_requested.connect(_files.open_dialog.bind(true))
-	_toolbar.undo_requested.connect(_travel.bind(-1))
-	_toolbar.redo_requested.connect(_travel.bind(1))
-	_toolbar.travel_requested.connect(_travel)
+	_toolbar.undo_requested.connect(_travel.bind(session.undo))
+	_toolbar.redo_requested.connect(_travel.bind(session.redo))
 	_toolbar.copy_requested.connect(session.copy_selection)
 	_toolbar.cut_requested.connect(_cut)
 	_toolbar.paste_requested.connect(_paste)
@@ -236,10 +235,9 @@ func _reflect_ink() -> void:
 		_inspector.set_tints(brush.tint)
 	_say("已取样")
 
-func _travel(direction: int) -> void:
+func _travel(action: Callable) -> void:
 	canvas.cancel()
-	if direction < 0: session.undo()
-	else: session.redo()
+	action.call()
 
 func _cut() -> void:
 	if not session.locked[session.layer] and session.copy_selection(): session.clear_selection()

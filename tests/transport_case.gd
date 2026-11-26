@@ -48,8 +48,8 @@ func run(_tree: SceneTree) -> void:
 	expect(_within_limit, "poll never expands beyond its logical message limit")
 
 func _host_room() -> void:
-	var mode := PvpSession.MODE_PVP
-	var options := RoomOptions.normalized(mode, {})
+	var mode := WorldSpec.DUEL
+	var options := RoomOptions.normalized(mode, {"lan_public": false})
 	var problem := await NetSession.create_room({"mode": mode, "options": options})
 	expect(problem.is_empty() and PvpSession.can_rejoin() and PvpSession.room.get("your_role") == 1,
 			"hosting starts the dedicated room and returns the host's seat and rejoin token: %s" % problem)

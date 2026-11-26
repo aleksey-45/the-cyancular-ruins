@@ -19,12 +19,12 @@ var team_counts: Dictionary
 var hits: Array[Array] = []
 var destroyed_subcells: Dictionary[int, int] = {}
 var enemy_kills := 0
-var rng := RandomNumberGenerator.new()
+var rng: RandomNumberGenerator
 var pending_blasts: Dictionary[int, Array] = {}
 var _next_enemy_projectile := -1
 
-func _init(map: Terrain, seed_value := 0) -> void:
-	rng.seed = seed_value
+func _init(map: Terrain, random: RandomNumberGenerator) -> void:
+	rng = random
 	terrain = map
 	ground = GroundWeaponField.new(map)
 
@@ -47,6 +47,16 @@ func add_enemy(type_id: String, player: Player, at: Vector2) -> EnemyBase:
 	enemies.append(enemy)
 	return enemy
 
+func sample_enemies() -> Array:
+	var poses := []
+	for enemy: EnemyBase in enemies:
+		poses.append([enemy.position, enemy.velocity, enemy.slot, enemy.kind.frames, enemy.scale,
+			enemy.activity, -1 if enemy.facing_left else 1, enemy._grounded, enemy.hp, enemy.is_dead,
+			maxf(enemy.hit_reaction_left, enemy.corpse_left), enemy.active, enemy.kind.elite,
+			enemy is EnemyBlackBird, enemy.lunge_age(),
+			enemy.collision_rect()])
+	return poses
+
 func clear_enemies() -> void:
 	for enemy in enemies:
 		enemy.release()
@@ -61,7 +71,8 @@ func close() -> void:
 
 ## 按角色 ID 处理输入。角色全部移动后再处理攻击，当帧生成的弹丸可在本帧移动。
 ## 查询使用最近一次提交的地形碰撞，本步地形改动统一在步末提交。
-func step(inputs: Dictionary) -> Dictionary:
+func step(inputs: Dictionary) -> void:
+	hits.clear()
 	destroyed_subcells.clear()
 	var reversing := time_field != null and time_field.is_rewinding()
 	if not reversing:
@@ -75,7 +86,7 @@ func step(inputs: Dictionary) -> Dictionary:
 	for role: int in roles:
 		ActorStep.step(players[role], inputs[role])
 
-	var shots := resolve_requests(roles)
+	resolve_requests(roles)
 	for enemy in enemies:
 		if enemy.active:
 			enemy.simulate_tick(ActorStep.DT)
@@ -83,37 +94,28 @@ func step(inputs: Dictionary) -> Dictionary:
 		step_projectiles(ActorStep.DT)
 		settle_blasts()
 	terrain.commit()
-	return shots
 
-func resolve_requests(roles: Array) -> Dictionary:
-	var shots := {}
+func resolve_requests(roles: Array) -> void:
+	var shots: Array = []
 	for role: int in roles:
 		var actor := players[role]
 		for request: Dictionary in actor.combat_requests:
 			match request["kind"]:
-				"fire": shots[ShotRules.shot_id(role, request["serial"])] = request
+				"fire": shots.append([actor, request])
 				"drown": resolve_hit(null, actor, CombatProfiles.DROWN, request["pos"], request["damage"], 0.0)
-	var ids := shots.keys()
-	ids.sort()
-	for id: int in ids:
-		var actor: Player = players.get(ShotRules.shooter_role(id))
-		if actor != null:
-			shots[id] = fire(actor, shots[id])
-	return shots
+	for shot: Array in shots:
+		fire(shot[0], shot[1])
 
-func fire(actor: Player, action: Dictionary) -> Dictionary:
-	var spec := WeaponRegistry.definition(action["type_id"])
-	var shot := action.merged({"role": actor.role}, true)
+func fire(actor: Player, shot: Dictionary) -> void:
+	var spec := WeaponRegistry.definition(shot["type_id"])
 	match spec["attack"]:
 		WeaponDef.Attack.PROJECTILE:
-			shot["vectors"] = ShotRules.projectiles(self, actor, shot, spec)
+			ShotRules.projectiles(self, actor, shot, spec)
 		WeaponDef.Attack.BEAM:
 			var points := ShotRules.beam(self, actor, shot, spec)
 			beams[ShotRules.shot_id(actor.role, shot["serial"])] = [tick + BEAM_TICKS, points]
-			shot["vectors"] = points
 		WeaponDef.Attack.MELEE:
-			shot["vectors"] = ShotRules.melee(self, actor, shot, spec)
-	return shot
+			ShotRules.melee(self, actor, shot, spec)
 
 func spawn_enemy_projectile(type_id: int, enemy: EnemyBase, velocity: Vector2) -> void:
 	var id := _next_enemy_projectile

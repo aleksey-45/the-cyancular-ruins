@@ -9,7 +9,6 @@ const INTERVAL := 1.0
 const TTL := 3.0
 const MAX_PACKET := 1024
 const VERSION := 1
-const MODES := ["pvp", "team", "royale"]
 # 限制每次轮询处理的数据报数量，避免广播流量过高时占用整帧。
 const MAX_PACKETS := 64
 
@@ -18,26 +17,13 @@ var _socket: PacketPeerUDP = null
 
 
 static func encode_room(info: Dictionary) -> PackedByteArray:
-	var room := {
-		"v": VERSION,
-		"t": "room",
-		"code": str(info.get("code", "")),
-		"mode": str(info.get("mode", "")),
-		"players": int(info.get("players", 0)),
-		"max": int(info.get("max", 0)),
-		"in_match": bool(info.get("in_match", false)),
-		"beta": bool(info.get("beta", false)),
-		"port": int(info.get("port", 0)),
-	}
-	return JSON.stringify(room).to_utf8_buffer()
+	return JSON.stringify(info.merged({"v": VERSION, "t": "room"})).to_utf8_buffer()
 
 
 static func decode_room(packet: PackedByteArray) -> Dictionary:
 	if packet.is_empty() or packet.size() > MAX_PACKET:
 		return {}
 	var text := packet.get_string_from_utf8()
-	if text.is_empty():
-		return {}
 	var json := JSON.new()
 	if json.parse(text) != OK:
 		return {}
@@ -45,31 +31,16 @@ static func decode_room(packet: PackedByteArray) -> Dictionary:
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return {}
 	var data: Dictionary = parsed
-	if not is_valid_room(data):
-		return {}
-	return data
-
-
-## 编码前和接收后使用相同的规则校验广播字段。
-static func is_valid_room(data: Dictionary) -> bool:
-	if data.has("v") and int(data["v"]) != VERSION:
-		return false
-	if data.has("t") and str(data["t"]) != "room":
-		return false
-	if not valid_code(str(data.get("code", ""))):
-		return false
-	if not MODES.has(str(data.get("mode", ""))):
-		return false
-	var players := _int_field(data, "players", 0, 16)
-	var maximum := _int_field(data, "max", 0, 16)
-	if players < 0 or maximum < 0 or players > maximum:
-		return false
-	if _int_field(data, "port", 1024, 65535) < 0:
-		return false
-	if not data.has("in_match") or not data.has("beta"):
-		return false
-	return true
-
+	if data.get("v") != VERSION or data.get("t") != "room": return {}
+	if not data.get("code") is String or not valid_code(data["code"]): return {}
+	if not PvpSession.MODE_NAMES.has(data.get("mode")): return {}
+	if not data.get("in_match") is bool or not data.get("beta") is bool: return {}
+	var maximum := _int_field(data, "max", 0, RoomOptions.ROYALE_PLAYERS.y)
+	var players := _int_field(data, "players", 0, maximum)
+	var port := _int_field(data, "port", 1024, 65535)
+	if players < 0 or port < 0: return {}
+	return {"code": data["code"], "mode": data["mode"], "players": players, "max": maximum,
+		"in_match": data["in_match"], "beta": data["beta"], "port": port}
 
 static func valid_code(code: String) -> bool:
 	if code.length() != 8:
@@ -96,25 +67,19 @@ static func _int_field(data: Dictionary, key: String, low: int, high: int) -> in
 
 ## 根据收到的广播刷新房间记录，返回房间信息是否有变化。
 func update(info: Dictionary, source_ip: String, now: float) -> bool:
-	var code := str(info.get("code", ""))
-	if not is_valid_room(info):
-		return false
+	var code: String = info["code"]
 	var previous: Dictionary = _rooms.get(code, {})
-	var changed := previous.is_empty() or str(previous.get("ip", "")) != source_ip \
-			or not _same_room(previous["info"], info)
-	_rooms[code] = {"info": info.duplicate(true), "ip": source_ip, "last_seen": now}
+	var changed: bool = previous.is_empty() or previous["ip"] != source_ip or previous["info"] != info
+	_rooms[code] = {"info": info, "ip": source_ip, "last_seen": now}
 	return changed
 
 
 ## 清除过期条目，按房间号排序返回仍有效的房间。
-func rooms(now: float) -> Array[Dictionary]:
+func rooms() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for code in _rooms.keys():
 		var entry: Dictionary = _rooms[code]
-		if now - float(entry["last_seen"]) > TTL:
-			_rooms.erase(code)
-			continue
-		var room: Dictionary = entry["info"].duplicate(true)
+		var room: Dictionary = entry["info"].duplicate()
 		room["ip"] = entry["ip"]
 		out.append(room)
 	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
@@ -159,7 +124,7 @@ func stop() -> void:
 func poll(now: float) -> bool:
 	if _socket == null:
 		return false
-	var changed := false
+	var changed := expire(now)
 	for _i in MAX_PACKETS:
 		if _socket.get_available_packet_count() <= 0:
 			break
@@ -171,12 +136,3 @@ func poll(now: float) -> bool:
 		if update(info, source_ip, now):
 			changed = true
 	return changed
-
-
-static func _same_room(a: Dictionary, b: Dictionary) -> bool:
-	return str(a.get("mode", "")) == str(b.get("mode", "")) \
-			and int(a.get("players", 0)) == int(b.get("players", 0)) \
-			and int(a.get("max", 0)) == int(b.get("max", 0)) \
-			and bool(a.get("in_match", false)) == bool(b.get("in_match", false)) \
-			and bool(a.get("beta", false)) == bool(b.get("beta", false)) \
-			and int(a.get("port", 0)) == int(b.get("port", 0))

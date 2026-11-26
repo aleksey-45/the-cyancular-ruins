@@ -36,12 +36,8 @@ func stop() -> void:
 	_targets.clear()
 	_room_info = Callable()
 
-func is_running() -> bool:
-	return _running
-
-## 到达发送时间后，向每个目标地址发送一个广播包。now 与 RoomSession 使用相同的时间基准，单位为秒。
 func tick(now: float) -> void:
-	if not _running or now < _next_at or not _room_info.is_valid():
+	if not _running or now < _next_at:
 		return
 	_next_at = now + INTERVAL
 	var info: Dictionary = _room_info.call()

@@ -62,7 +62,7 @@ func validate() -> void:
 		for mode: String in PvpSession.MODE_NAMES:
 			var limit := SpawnPicker.player_limit(sides, mode)
 			var label := "点位不足"
-			if mode == PvpSession.MODE_ROYALE:
+			if mode == WorldSpec.ROYALE:
 				label = "最多 %d 人" % limit if limit else "点位不足，至少需要 %d 人" % RoomOptions.MIN_PLAYERS
 			elif limit: label = "通过"
 			summary += "    %s：%s" % [PvpSession.mode_name(mode), label]

@@ -1,25 +1,30 @@
 class_name InputScheduler
-extends RefCounted
+extends InputBuffer
 
-# 每个输入版本使用独立实例。快照把 feedback 原样传给预测时钟。
+# 每个远端席位持有一份输入缓冲和时序统计。快照把 feedback 原样传给预测时钟。
 const HZ := 60
 const BLOCK := 15
 const WINDOW := 8 * HZ
 const START_MARGIN := 2
 const JITTER_BUDGET := 3
 
-var feedback: PackedByteArray:
-	get: return _feedback
-
-var _feedback := PackedByteArray()
+var feedback := PackedByteArray()
 var _reported := 0
 var _next_update := 0
 var _latest := 0
 # 按输入序号记录原定目标帧、持续输入的首次可用帧和从收包到分发的微秒数。仅收到单次动作时，可用帧为 0。
 var _samples: Dictionary[int, Vector3i] = {}
 
+func reset(new_epoch: int) -> void:
+	super(new_epoch)
+	feedback = PackedByteArray()
+	_reported = 0
+	_next_update = 0
+	_latest = 0
+	_samples.clear()
+
 # 最新持续输入超出服务器时序窗口时返回 false，由调用方重置输入版本。
-func submit(buffer: InputBuffer, packet: Array, tick: int, received_us := -1, dispatch_us := -1) -> bool:
+func submit(packet: Array, tick: int, received_us := -1, dispatch_us := -1) -> bool:
 	var available := tick + 1
 	if dispatch_us < 0:
 		dispatch_us = Time.get_ticks_usec()
@@ -28,7 +33,7 @@ func submit(buffer: InputBuffer, packet: Array, tick: int, received_us := -1, di
 	var newest_target := 0
 	for row: Array in packet[InputBuffer.PACKET_FRAMES]:
 		var seq: int = row[InputBuffer.SEQ]
-		if row[InputBuffer.EPOCH] == buffer.epoch and seq > newest:
+		if row[InputBuffer.EPOCH] == epoch and seq > newest:
 			newest = seq
 			newest_target = row[InputBuffer.TARGET_TICK]
 	if newest > _latest and (newest > tick + InputBuffer.FUTURE_TICKS or absi(newest_target - tick) > InputBuffer.FUTURE_TICKS):
@@ -38,7 +43,7 @@ func submit(buffer: InputBuffer, packet: Array, tick: int, received_us := -1, di
 		for row: Array in packet[group]:
 			var seq: int = row[InputBuffer.SEQ]
 			var target: int = row[InputBuffer.TARGET_TICK]
-			if row[InputBuffer.EPOCH] != buffer.epoch or seq <= 0 or seq > tick + InputBuffer.FUTURE_TICKS \
+			if row[InputBuffer.EPOCH] != epoch or seq <= 0 or seq > tick + InputBuffer.FUTURE_TICKS \
 					or target <= 0 or target > tick + InputBuffer.FUTURE_TICKS or seq < _latest - WINDOW:
 				continue
 			var first: Vector3i = _samples.get(seq, Vector3i(target, 0, 0))
@@ -50,7 +55,7 @@ func submit(buffer: InputBuffer, packet: Array, tick: int, received_us := -1, di
 				_latest = maxi(_latest, seq)
 			_samples[seq] = first
 			accepted[group].append(row)
-	buffer.push(accepted, tick)
+	push(accepted, tick)
 	if _reported == 0 and _latest > 0:
 		var seed := available - _latest + START_MARGIN
 		_publish(_latest, seed, seed)
@@ -61,7 +66,7 @@ func submit(buffer: InputBuffer, packet: Array, tick: int, received_us := -1, di
 
 func _publish(sample: int, steady: float, recent: float, drift := 0.0) -> void:
 	_reported = sample
-	_feedback = InputClock.pack_feedback(sample, steady, recent, drift)
+	feedback = InputClock.pack_feedback(sample, steady, recent, drift)
 
 static func _quantile(sorted: Array[float], fraction: float) -> float:
 	return sorted[ceili(sorted.size() * fraction) - 1]

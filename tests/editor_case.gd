@@ -341,12 +341,12 @@ func _canvas_tools(editor: MapEditor) -> void:
 	expect(not s.dirty(), "freehand motion only previews a stroke")
 	_mouse(c, Vector2i(6, 6), false)
 	expect(CyrmMap.read_region(s.map, s.layer, area).count(_stone) == 5 and CyrmMap.read_region(s.map, s.layer, s.bounds).count(_stone) == 9, "release commits the bent path without a selection")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	editor._choose_tool("bucket")
 	_mouse(c, Vector2i(2, 2), true)
 	expect(CyrmMap.read_region(s.map, s.layer, s.bounds).count(_stone) == s.bounds.get_area(), "bucket fills the unselected map on press")
 	_mouse(c, corner, false)
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(not s.dirty(), "a bucket release creates no second edit")
 	editor._choose_tool("select")
 	_mouse(c, Vector2i(2, 2), true)
@@ -361,7 +361,7 @@ func _canvas_tools(editor: MapEditor) -> void:
 	expect(s.revision == revision and s.clip_size == area.size, "Copy is a command even while the bucket is active")
 	_key(editor, KEY_X, true)
 	expect(editor.active_tool == "bucket" and CyrmMap.read_region(s.map, s.layer, area).count(0) == 5, "Cut clears the box without switching tools")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(CyrmMap.read_region(s.map, s.layer, s.bounds).count(_stone) == 5, "undo Cut restores only the clipped fill")
 	editor._choose_tool("select")
 	_mouse(c, Vector2i(2, 2), true)
@@ -429,7 +429,7 @@ func _workspace_controls(editor: MapEditor) -> void:
 	_mouse(c, origin + Vector2i.RIGHT, true)
 	_mouse(c, destination + Vector2i.RIGHT, false)
 	expect(s.map.points[enemy].cell == destination, "grabbing the edge of a marker preserves the offset from its anchor")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	editor._choose_tool("brush")
 	c.zoom = 8
 	_mouse(c, origin, true)
@@ -448,7 +448,7 @@ func _workspace_controls(editor: MapEditor) -> void:
 	_key(editor, KEY_Z, true)
 	_key(editor, KEY_Z, true, true)
 	expect(s.map.points[enemy].cell == destination, "the displayed redo shortcut replays one move")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(not editor._modified.visible, "undo to saved state hides dirty indicator")
 	_mouse(c, origin, true)
 	_move_mouse(c, destination)
@@ -465,7 +465,7 @@ func _workspace_controls(editor: MapEditor) -> void:
 	editor._points._type.select(fly)
 	editor._points._type.item_selected.emit(fly)
 	expect(s.map.points[enemy].type == "fly_bird" and s.selected_point().type == "fly_bird", "type choice updates the selected bird immediately")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(s.selected_point().type == "jump_bird" and editor._points._type.get_selected_metadata().type == "jump_bird", "undo refreshes the canvas and the point inspector together")
 	var list := editor._points._list
 	var bird_row := list.get_selected_items()[0]
@@ -473,7 +473,7 @@ func _workspace_controls(editor: MapEditor) -> void:
 	expect(s.selected_point_id == enemy, "editing notes keeps the selected point")
 	s.place_point({"kind": "respawn", "cell": destination, "side": 2})
 	expect(s.selected_point().is_empty() and list.get_item_metadata(bird_row + 1) == enemy, "inserting a row shifts the bird's display row but preserves its ID")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(s.selected_point().is_empty() and list.get_item_metadata(bird_row) == enemy, "undo returns the same bird to its original row")
 	var respawn := CyrmMap.first_point_id(s.map, "respawn")
 	s.commit_point(respawn, {"kind": "respawn", "side": 1, "cell": origin})
@@ -521,7 +521,7 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	expect(s.selected_point_id == inside_id and list.get_item_metadata(list.get_selected_items()[0]) == inside_id, "canvas and list select the same respawn ID")
 	s.resize_map(Vector2i(7, 8))
 	expect(s.selected_point().is_empty() and s.map.points[inside_id].cell == inside, "crop retains the surviving point in the map and clears selection")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(s.selected_point().is_empty() and s.map.points[outside_id].cell == outside, "undo crop restores the original point without selecting it")
 	_click_cell(c, inside)
 	var option := editor._points._type.selected
@@ -545,10 +545,10 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	_mouse(c, inside, true, MOUSE_BUTTON_LEFT, 0, true)
 	_mouse(c, inside, false)
 	expect(editor._trial.trial == null and s.selected_point_id != twin and s.selected_point() == s.map.points[twin], "the second press of a double-click places another marker in continuous mode")
-	editor._travel(-1)
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
+	editor._travel(editor.session.undo)
 	expect(s.selected_point().is_empty() and not s.map.points.has(twin) and s.map.points[inside_id].cell == inside, "undo removes just the placed twin")
-	editor._travel(1)
+	editor._travel(editor.session.redo)
 	expect(s.selected_point().is_empty() and s.map.points[twin].cell == inside, "redo restores the same ID without selecting it")
 	var revision := s.revision
 	var player: Vector2i = s.map.points[CyrmMap.first_point_id(s.map, "player")].cell
@@ -561,16 +561,16 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	_click_cell(c, outside)
 	s.resize_map(Vector2i(7, 8))
 	expect(s.selected_point().is_empty() and not editor._points._details.visible, "cropping the selected point clears the inspector")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	_click_cell(c, outside)
 	_key(editor, KEY_DELETE)
 	expect(not s.map.points.has(outside_id) and s.selected_point().is_empty(), "Delete removes only the selected ID and clears selection")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(s.map.points[outside_id].cell == outside and s.selected_point().is_empty(), "undo delete restores the original ID without reviving a stale selection")
 	_click_cell(c, inside)
 	_key(editor, KEY_DELETE)
 	_click_cell(c, inside)
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(s.selected_point().is_empty(), "restoring an indistinguishable twin does not silently select another row")
 	_click_cell(c, inside)
 	_click_cell(c, Vector2i(0, 7))
@@ -591,7 +591,7 @@ func _size_dialogs(tree: SceneTree, editor: MapEditor) -> void:
 	dialog.hide()
 	await tree.process_frame
 	expect(editor.session.map.size == Vector2i(49, 32), "resize is available from the editor dialog")
-	editor._travel(-1)
+	editor._travel(editor.session.undo)
 	expect(editor.session.map.size == Vector2i(48, 32), "dialog resize remains one undo")
 	editor._files.size_dialog(true)
 	dialog = editor.get_child(-1)
@@ -609,14 +609,13 @@ func _mode_limits(editor: MapEditor) -> void:
 	map.points = {0: {"kind": "respawn", "side": 1, "cell": sides[1][0]}}
 	editor._files.open_document(map, "")
 	editor._validate()
-	var rules := MatchRules.new(RandomNumberGenerator.new())
 	expect(editor._status.text.contains("大乱斗：点位不足，至少需要 2 人")
-			and not rules.setup(PvpSession.MODE_ROYALE, [1, 2], {}, map, {}).is_empty(), "one valid spawn is insufficient in both the editor and a two-player Royale")
+			and not WorldSpec.arena(map, WorldSpec.ROYALE, [1, 2], {}, {}, 0).problem().is_empty(), "one valid spawn is insufficient in both the editor and a two-player Royale")
 	map.points[1] = {"kind": "respawn", "side": 2, "cell": sides[2][0]}
 	editor._validate()
 	expect(editor._status.text.contains("1v1：通过") and editor._status.text.contains("团队对抗：点位不足")
-			and editor._status.text.contains("大乱斗：最多 2 人") and rules.setup(PvpSession.MODE_ROYALE, [1, 2], {}, map, {}).is_empty()
-			and not rules.setup(PvpSession.MODE_ROYALE, [1, 2, 3], {}, map, {}).is_empty(), "two valid spawns enable exactly a two-player Royale and a duel")
+			and editor._status.text.contains("大乱斗：最多 2 人") and WorldSpec.arena(map, WorldSpec.ROYALE, [1, 2], {}, {}, 0).problem().is_empty()
+			and not WorldSpec.arena(map, WorldSpec.ROYALE, [1, 2, 3], {}, {}, 0).problem().is_empty(), "two valid spawns enable exactly a two-player Royale and a duel")
 
 func _workflow(tree: SceneTree) -> void:
 	var filename := "editor-测试-%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
@@ -633,6 +632,14 @@ func _workflow(tree: SceneTree) -> void:
 	var saved := FileAccess.get_file_as_bytes(autosave_target)
 	var edited := editor.session
 	var added := edited.place_point({"kind": "enemy", "type": "fly_bird", "cell": Vector2i(1, 1)})
+	editor.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	NetSession.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	await tree.process_frame
+	var quit_prompt: ConfirmationDialog = editor.find_children("*", "ConfirmationDialog", true, false).back()
+	expect(quit_prompt.visible and edited.dirty(), "closing a dirty editor gives the player time to cancel")
+	quit_prompt.hide()
+	await tree.process_frame
+	expect(editor.is_inside_tree() and edited.map.points.has(added), "cancelling close preserves the unsaved map")
 	for i in 4:
 		await tree.create_timer(2.0).timeout
 		edited.put_notes("# edit %d before the tick" % i)

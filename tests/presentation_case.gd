@@ -6,6 +6,7 @@ func run(tree: SceneTree) -> void:
 	_daylight(tree)
 	if DisplayServer.get_name() != "headless":
 		await _daylight_render(tree)
+		await _pickup_bindings(tree)
 	_camera(tree)
 	cleanup()
 	_detached_match()
@@ -22,8 +23,8 @@ func _loading_failure(tree: SceneTree) -> void:
 
 func _detached_match() -> void:
 	var map := CyrmMap.load_file("res://maps/demo.cyrm")
-	var sim := CombatSimulator.new(Terrain.new(map))
-	sim.time_field = WorldTime.new(GrainAccount.new())
+	var sim := CombatSimulator.new(Terrain.new(map), RandomNumberGenerator.new())
+	sim.time_field = WorldTime.new(1)
 	var actor := sim.add_player(1)
 	actor.spawn_at(SpawnPicker.single_spawn(map))
 	actor.weapons.set_initial_inventory([WeaponType.RIFLE])
@@ -163,19 +164,16 @@ func _damage_numbers(tree: SceneTree) -> void:
 	var sim := parent.combat
 	var bird := sim.add_enemy("jump_bird", shooter, Vector2.ZERO)
 	var view := WorldView.new()
-	view.bind(canvas_for(parent), _terrain.map_size)
-	var spec := WorldSpec.solo(_document, Vector2i.ZERO, [WeaponType.RIFLE], 0)
-	var props := MatchWorld.new()
-	props.combat = sim
-	props.terrain = _terrain
-	var presenter := MatchPresenter.new(spec, _terrain, shooter.role, null)
+	view.bind(canvas_for(parent), parent.terrain.map_size)
+	var spec := WorldSpec.solo(parent.document, Vector2i.ZERO, [WeaponType.RIFLE], 0)
+	var presenter := MatchPresenter.new(spec, parent.terrain, shooter.role, null)
 	var frame := presenter.frame
 	frame.begin(0.0, shooter.position)
-	presenter._sample_enemies(props.sample()["enemies"], false, false)
+	presenter._sample_enemies(sim.sample_enemies(), false, false)
 	var lethal_damage := bird.hp
 	sim.resolve_hit(shooter, bird, CombatProfiles.DIRECT, bird.position, lethal_damage, 0.0)
 	frame.begin(0.0, shooter.position)
-	presenter._sample_enemies(props.sample()["enemies"], false, false)
+	presenter._sample_enemies(sim.sample_enemies(), false, false)
 	for cue: Array in frame.cues:
 		if cue[0] == "number":
 			view.hit(cue[1], cue[2], cue[3], cue[4])
@@ -203,22 +201,22 @@ func _daylight(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var combat := parent.combat
 	var actor := player(parent)
-	var field := WorldTime.new(GrainAccount.new())
+	var field := WorldTime.new(1)
 	combat.time_field = field
 	expect(Daylight.time_text(Daylight.minute_at(0.0)) == "06:00" and Daylight.minute_at(120.0) == 360.0,
 			"a full daylight cycle returns to dawn after 120 seconds")
 	field.elapsed = 89.75
-	field.advance(combat, actor, 0, 1)
+	field.advance(combat, {actor.role: NEUTRAL_INPUT}, 1)
 	_record_time(combat, actor)
 	var before := field.elapsed
 	for at in range(2, 17):
-		field.advance(combat, actor, ActorInput.BIT_HASTE, at)
+		field.advance(combat, {actor.role: _attack(ActorInput.BIT_HASTE, 0)}, at)
 	expect(is_equal_approx(field.elapsed, before + 0.5) and Daylight.time_text(Daylight.minute_at(field.elapsed)).begins_with("00:"),
 			"haste carries the sky and clock through midnight at player speed")
 	field.rewind(combat, actor, 1.0)
 	expect(field.elapsed == before and Daylight.time_text(Daylight.minute_at(field.elapsed)).begins_with("23:"),
 			"rewinding a hasted interval restores the earlier time of day")
-	field.advance(combat, actor, 0, 18)
+	field.advance(combat, {actor.role: NEUTRAL_INPUT}, 18)
 	expect(is_equal_approx(field.elapsed, before + ActorStep.DT), "daylight resumes from the restored time")
 	cleanup()
 
@@ -337,6 +335,7 @@ func _player_lighting_render(viewport: SubViewport, canvas: WorldCanvas) -> void
 		return crowd.get_pixel(int(pose.anchor.x) + 1, 58).r > 0.8),
 			"separated players keep their eye lights in a full 16-player match")
 
+## 在同一个测试场景中验证摄像机的初始偏移、目标跟随、抖动和跨地图边缘的行为。
 func _camera(tree: SceneTree) -> void:
 	cleanup()
 	var parent := world(tree)
@@ -345,31 +344,31 @@ func _camera(tree: SceneTree) -> void:
 	var target := Node2D.new()
 	parent.add_child(target)
 	target.position = Vector2(300, 200)
-	cam.advance(1.0 / 60.0, target.position, _terrain.map_size)
+	cam.advance(1.0 / 60.0, target.position, parent.terrain.map_size)
 	var bias := Vector2(0.0, CFG.cam_y_bias)
 	expect(cam.base_position.is_equal_approx(Vector2(300, 200) + bias),
 			"the first bind initializes the base position with the y bias")
 	var leading := MatchCamera.new()
 	parent.add_child(leading)
-	leading.advance(ActorStep.DT, target.position, _terrain.map_size, CFG.move_speed * 0.5)
+	leading.advance(ActorStep.DT, target.position, parent.terrain.map_size, CFG.move_speed * 0.5)
 	expect(leading.base_position.is_equal_approx(target.position + bias + Vector2(50, 0)),
 			"half running speed leads the player by fifty world pixels")
 	leading = MatchCamera.new()
 	parent.add_child(leading)
-	leading.advance(ActorStep.DT, target.position, _terrain.map_size, -CFG.charge_velocity)
+	leading.advance(ActorStep.DT, target.position, parent.terrain.map_size, -CFG.charge_velocity)
 	expect(leading.base_position.is_equal_approx(target.position + bias + Vector2(-100, 0)),
 			"a leftward dash caps the camera lead at one hundred world pixels")
 	var before_stop := leading.base_position.x
-	leading.advance(ActorStep.DT, target.position, _terrain.map_size, 0.0)
+	leading.advance(ActorStep.DT, target.position, parent.terrain.map_size, 0.0)
 	expect(leading.base_position.x > before_stop and leading.base_position.x < target.position.x,
 			"stopping eases the camera back toward the player")
 	# 先让目标在摄像机的跟随阈值以内移动，然后越过阈值。
 	target.position += Vector2(CFG.cam_deadzone - 1.0, 0.0)
-	cam.advance(1.0 / 60.0, target.position, _terrain.map_size)
+	cam.advance(1.0 / 60.0, target.position, parent.terrain.map_size)
 	var settled: Vector2 = cam.base_position
 	expect(settled.x < 301.0, "a target inside the deadzone does not move the camera")
 	target.position += Vector2(200.0, 0.0)
-	cam.advance(1.0 / 60.0, target.position, _terrain.map_size)
+	cam.advance(1.0 / 60.0, target.position, parent.terrain.map_size)
 	var moved: Vector2 = cam.base_position
 	expect(moved.x > settled.x + 1.0 and moved.x < target.position.x - 1.0,
 			"a target outside the deadzone is followed with exponential smoothing")
@@ -378,7 +377,7 @@ func _camera(tree: SceneTree) -> void:
 	cam.shake(5.0, 0.1)
 	expect(is_equal_approx(cam._shake_amt, 30.0) and cam._shake_time >= 0.49,
 			"a weak shake cannot replace a stronger amplitude or a longer duration")
-	cam.advance(1.0 / 60.0, target.position, _terrain.map_size)
+	cam.advance(1.0 / 60.0, target.position, parent.terrain.map_size)
 	expect(cam.position.is_equal_approx(cam.base_position + cam._shake_offset),
 			"the rendered position is base + shake offset")
 	# 清除抖动后，将目标放到地图另一端，观察摄像机是否沿跨越边缘的较短方向跟随。
@@ -386,9 +385,40 @@ func _camera(tree: SceneTree) -> void:
 	cam._shake_time = 0.0
 	cam._shake_dur = 0.0
 	cam._shake_offset = Vector2.ZERO
-	target.position = Vector2(_terrain.map_size.x - 4.0, 200)
+	target.position = Vector2(parent.terrain.map_size.x - 4.0, 200)
 	cam.base_position = Vector2(4.0, 200 + CFG.cam_y_bias)
-	cam.advance(1.0 / 60.0, target.position, _terrain.map_size)
+	cam.advance(1.0 / 60.0, target.position, parent.terrain.map_size)
 	expect(cam.base_position.distance_to(target.position + bias) < 32.0,
 			"the camera moves into the target's copy across the seam")
 	cleanup()
+
+func _pickup_bindings(tree: SceneTree) -> void:
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(480, 100)
+	viewport.transparent_bg = true
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	tree.root.add_child(viewport)
+	var prompt := PickupPrompt.new()
+	prompt.position = Vector2(viewport.size) * 0.5
+	viewport.add_child(prompt)
+	var original := InputMap.action_get_events(&"F")
+	var f := InputEventKey.new()
+	f.physical_keycode = KEY_F
+	var e := InputEventKey.new()
+	e.physical_keycode = KEY_E
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	var images: Array[Image] = []
+	for binding in [f, e, mouse, f]:
+		InputMap.action_erase_events(&"F")
+		InputMap.action_add_event(&"F", binding)
+		prompt.queue_redraw()
+		await RenderingServer.frame_post_draw
+		images.append(viewport.get_texture().get_image())
+	InputMap.action_erase_events(&"F")
+	for binding in original: InputMap.action_add_event(&"F", binding)
+	expect(images[0].get_data() != images[1].get_data() and images[0].get_data() == images[3].get_data(),
+			"pickup keycap redraws the bound keyboard key and restores its original appearance")
+	expect(images[2].get_used_rect().size.x > images[0].get_used_rect().size.x,
+			"the pickup keycap expands for a mouse binding")
+	viewport.free()

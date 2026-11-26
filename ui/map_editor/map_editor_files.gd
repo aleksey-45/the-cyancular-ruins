@@ -87,8 +87,8 @@ func size_dialog(create: bool) -> void:
 	form.custom_minimum_size.x = 400
 	dialog.add_child(form)
 	var initial: Vector2i = DEFAULT_SIZE if create else session.map.size
-	var width := _spin(form, "宽（子格）", 1, CyrmMap.MAX_SIZE.x, initial.x)
-	var height := _spin(form, "高（子格）", 1, CyrmMap.MAX_SIZE.y, initial.y)
+	var width := UiKit.spin_row(form, "宽（子格）", 1, CyrmMap.MAX_SIZE.x, initial.x)
+	var height := UiKit.spin_row(form, "高（子格）", 1, CyrmMap.MAX_SIZE.y, initial.y)
 	dialog.confirmed.connect(func() -> void:
 		var dims := Vector2i(int(width.value), int(height.value))
 		if create:
@@ -136,17 +136,3 @@ func resize_to(dims: Vector2i) -> void:
 		confirm(warning + "\n可用撤销恢复。", "调整尺寸", session.resize_map.bind(dims))
 	else:
 		session.resize_map(dims)
-
-func _spin(parent: Control, text: String, minimum: int, maximum: int, value: int) -> SpinBox:
-	var row := HBoxContainer.new()
-	parent.add_child(row)
-	var label := Label.new()
-	label.text = text
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(label)
-	var spin := SpinBox.new()
-	spin.min_value = minimum
-	spin.max_value = maximum
-	spin.value = value
-	row.add_child(spin)
-	return spin

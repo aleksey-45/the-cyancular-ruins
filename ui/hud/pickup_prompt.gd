@@ -14,28 +14,26 @@ const C_OUTER := UiDesign.C_ACCENT
 const C_INNER := Color(UiDesign.C_ACCENT, 0.55)
 const C_TEXT := UiDesign.C_WHITE
 
-const KEY_TEXT := "F"
-
 
 func _ready() -> void:
 	z_index = 100
 
 
 func _draw() -> void:
-	var half := BOX * 0.5
-	var outer := Rect2(-half, BOX)
+	var key := Settings.get_binding_names("F")
+	var f := UiDesign.pixel_font()
+	var w := f.get_string_size(key, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
+	var box_size := Vector2(maxf(BOX.x, w + INNER_INSET * 3), BOX.y)
+	var outer := Rect2(-box_size * 0.5, box_size)
 	draw_rect(outer, C_BG, true)
 	_stroke(outer, C_OUTER)
-	var ins := Vector2(INNER_INSET, INNER_INSET)
-	_stroke(Rect2(-half + ins, BOX - ins * 2.0), C_INNER)
+	_stroke(outer.grow(-INNER_INSET), C_INNER)
 
-	var f: Font = UiDesign.pixel_font()
-	var w := f.get_string_size(KEY_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
 	var baseline := (f.get_ascent(FONT_SIZE) - f.get_descent(FONT_SIZE)) * 0.5
 	var pos := Vector2(-w * 0.5, baseline)
 	# 将像素字体错开 1 像素重复绘制，让单字按键更易辨认。
 	for off in [Vector2.ZERO, Vector2(1, 0), Vector2(0, 1), Vector2(1, 1)]:
-		draw_string(f, pos + off, KEY_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, C_TEXT)
+		draw_string(f, pos + off, key, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, C_TEXT)
 
 
 func _stroke(r: Rect2, c: Color) -> void:

@@ -12,13 +12,12 @@ enum Flow { INPUT, STATE, EVENT }
 const DEFAULT_PORT := 7777
 const DISPATCH_BUDGET_US := 2000
 const DISPATCH_BUDGET_BYTES := 512 * 1024
-const RECEIVE_BATCH_MESSAGES := 256
 const MAX_PENDING_MESSAGES := 1024
 const MAX_PENDING_BYTES := 64 * 1024 * 1024
 const MAX_RECEIVE_AGE_US := 5000000
 const MIN_STATE_PACKET_BYTES := 3 + 4 * 4 + 1
 var is_server_mode := false
-var manual_poll := false
+var server_ip := "127.0.0.1"
 var server_port := DEFAULT_PORT
 var ping_ms := 0
 var _transport := GnsEndpoint.new()
@@ -50,19 +49,11 @@ func start_server(port: int = DEFAULT_PORT) -> Error:
 		server_port = _transport.get_port()
 	return error
 
-func connect_local(port: int, timeout_ms: int, alive := Callable()) -> Error:
-	if can_send_to_server() and server_port == port:
+func connect_server(ip: String, port: int, timeout_ms: int, alive := Callable()) -> Error:
+	if can_send_to_server() and server_ip == ip and server_port == port:
 		return OK
-	return await _connect_to("127.0.0.1", port, timeout_ms, alive)
-
-
-## 直接连接指定地址和端口。等待、取消与超时行为与 connect_local 相同。
-func connect_remote(ip: String, port: int, timeout_ms: int, alive := Callable()) -> Error:
-	return await _connect_to(ip, port, timeout_ms, alive)
-
-
-func _connect_to(ip: String, port: int, timeout_ms: int, alive: Callable) -> Error:
 	stop()
+	server_ip = ip
 	server_port = port
 	var error := _transport.connect_to(ip, port) as Error
 	if error != OK:
@@ -105,12 +96,8 @@ func send_state(peer: int, feedback: PackedByteArray, batch: NetCodec.StateBatch
 		return
 	var perf_started := PerformanceStats.begin()
 	var bytes := codec.encode_state(feedback, batch)
-	var large := bytes.size() > 256 * 1024
-	if large and bytes.decode_u32(5) != 0:
-		bytes = codec.encode_state(feedback, batch, true)
 	PerformanceStats.end(PerformanceStats.STATE_ENCODE, perf_started)
-	codec.waiting_full = codec.serial if large else 0
-	_send(peer, Flow.EVENT if large else Flow.STATE, bytes)
+	_send(peer, Flow.EVENT if codec.waiting_full != 0 else Flow.STATE, bytes)
 
 func send_final_state(peers: PackedInt32Array, batch: NetCodec.StateBatch) -> void:
 	var started := PerformanceStats.begin()
@@ -123,8 +110,8 @@ func send_final_state(peers: PackedInt32Array, batch: NetCodec.StateBatch) -> vo
 	PerformanceStats.end(PerformanceStats.STATE_ENCODE, started)
 	_send_reliable(peers, bytes)
 
-func send_event(kind: int, data: Variant = null, peer: int = 1) -> void:
-	_send(peer, Flow.EVENT, _codec(peer).encode_event(kind, data))
+func send_event(kind: int, data: Variant = null, peer: int = 1, batch: NetCodec.StateBatch = null) -> void:
+	_send(peer, Flow.EVENT, _codec(peer).encode_event(kind, data, batch))
 
 # 同一个事件发给多个连接时，所有接收方共用编码后的字节。
 func broadcast_event(kind: int, data: Variant, peers: PackedInt32Array) -> void:
@@ -156,17 +143,16 @@ func _wire(bytes: PackedByteArray) -> PackedByteArray:
 	wire.append_array(bytes)
 	return wire
 
-func _physics_process(_delta: float) -> void:
-	if not manual_poll:
-		poll_messages()
+func _ready() -> void:
+	process_physics_priority = -100
 
-func poll_messages() -> void:
+func _physics_process(_delta: float) -> void:
 	if not _active:
 		return
 	var perf_poll := PerformanceStats.begin()
 	var generation := connection_generation
 	# 新收到的消息与此前积压的消息一起合并和筛选。
-	var messages := _transport.poll(RECEIVE_BATCH_MESSAGES)
+	var messages := _transport.poll()
 	_pending_messages.append_array(messages)
 	messages = _filter_receive_backlog(_coalesce_messages(_pending_messages))
 	_pending_messages = []
@@ -256,7 +242,7 @@ func _receive(peer: int, packet: PackedByteArray, received_us: int) -> void:
 	var code := packet[2]
 	var kind := code - NetCodec.EVENT
 	if is_server_mode:
-		if code != NetCodec.INPUT and (kind < NetEvent.Kind.HELLO or kind > NetEvent.Kind.SUICIDE):
+		if code != NetCodec.INPUT and (kind < NetEvent.Kind.CREATE or kind > NetEvent.Kind.SUICIDE):
 			return
 	elif code != NetCodec.STATE and (kind < NetEvent.Kind.ROOM or kind > NetEvent.Kind.ROOM_CLOSED):
 		return

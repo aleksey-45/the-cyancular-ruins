@@ -1,15 +1,15 @@
 shader_type canvas_item;
 render_mode blend_premul_alpha;
 
-// 每个子格保存对应的瓦片图层，地图边缘循环采样。
+// 索引纹理的每个子格记录该瓦片在纹理数组中的层号，跨地图边界时循环采样。
 uniform sampler2D tile_index : filter_nearest, repeat_enable;
 uniform sampler2DArray tiles : filter_nearest, repeat_disable;
-uniform vec2  map_size   = vec2(150.0, 100.0);  // 地图宽高均以瓦片数表示。
-uniform float view_w_cells = 26.6667;              // 应用畸变前，窗口宽度对应的瓦片数。
+uniform vec2  map_size   = vec2(150.0, 100.0);  // 整张地图横向和纵向的纹理平铺次数。
+uniform float view_w_cells = 26.6667;              // 畸变前的视野宽度，以纹理平铺周期为单位。
 uniform float fisheye    = 0.85;
 instance uniform vec2 view_center = vec2(0.5);          // 视野中心在整张地图中的相对位置。
 instance uniform float rot_angle = 0.0;                // 以视野中心为原点的旋转角，单位为弧度。
-uniform float breathe_amp = 0.012;              // 坐标缩放系数在 1 的两侧变化，最大偏差由该参数决定。
+uniform float breathe_amp = 0.012;              // 周期性缩放的振幅，缩放倍率在 1 附近变化。
 uniform float aberration = 0.020;
 uniform float dim        = 0.60;                // 整幅画面的压暗程度。1 表示全黑。
 uniform float vignette   = 0.30;
@@ -51,7 +51,7 @@ void fragment() {
 
 	float r = length(cc);
 
-	// 模糊使用 3×3 高斯卷积核。只有中央采样点计算各颜色通道的偏移，减小纹理采样开销。
+	// 使用 3×3 高斯模糊，只在中心取样时计算色差以减少纹理采样次数。
 	vec4 scene = bg_sample_ab(cc);
 	if (blur_radius >= 0.5) {
 		float step_uv = SCREEN_PIXEL_SIZE.x * blur_radius;

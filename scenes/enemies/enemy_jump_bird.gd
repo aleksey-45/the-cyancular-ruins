@@ -9,6 +9,9 @@ var _lunge_dir: Vector2 = Vector2.RIGHT
 var _lunge_traveled: float = 0.0
 var _dash_timer: float = 0.0
 
+func lunge_age() -> float:
+	return DASH_TIMEOUT - _dash_timer
+
 func _setup() -> void:
 	_rewind_fields.append_array([&"_hop_timer", &"_back_hop_cd", &"_lunge_dir", &"_lunge_traveled", &"_dash_timer"])
 	wake_radius = ECFG.jump_bird_wake_radius

@@ -64,7 +64,7 @@ func sample(player: Player, delta: float, aim: Vector2) -> Array:
 	return [axis, held, pressed, released, inst, aim]
 
 static func _switch_index() -> int:
-	for i in range(1, 5):
+	for i in range(1, WeaponInventory.MAX_WEAPONS + 1):
 		if Input.is_action_just_pressed(str(i)):
 			return i
 	return 0

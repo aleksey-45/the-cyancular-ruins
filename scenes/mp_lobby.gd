@@ -32,7 +32,7 @@ func _ready() -> void:
 	NetBus.server_disconnected.connect(_on_connection_error.bind("与房间的连接已断开"))
 	_start_discovery()
 	if NetBus.can_send_to_server() and not PvpSession.room.is_empty() and not PvpSession.room["in_match"]:
-		NetSession.send_hello()
+
 		_show_room()
 	elif PvpSession.can_rejoin() and bool(PvpSession.room.get("in_match", false)) and not NetBus.can_send_to_server():
 		_auto_rejoin()
@@ -45,9 +45,8 @@ func _process(delta: float) -> void:
 		return
 	_poll_clock = 0.0
 	var now := Time.get_ticks_msec() / 1000.0
-	var expired := _discovery.expire(now)
-	if _discovery.poll(now) or expired:
-		_view.present_rooms(_discovery.rooms(now))
+	if _discovery.poll(now):
+		_view.present_rooms(_discovery.rooms())
 
 static func _form_values() -> Dictionary:
 	return {"hue": Settings.pvp_color_hue, "match_min": Settings.royale_match_min,
@@ -57,7 +56,7 @@ static func _form_values() -> Dictionary:
 func _name_changed(text: String) -> void:
 	var name := text.strip_edges()
 	PvpSession.player_name = "Anon" if name.is_empty() else name
-	NetSession.send_hello()
+
 
 func _back() -> void:
 	NetSession.close()
@@ -67,7 +66,7 @@ func _set_filter(mode: String) -> void:
 	_view.select_filter(mode)
 
 func _join_room(code: String, endpoint: Dictionary) -> void:
-	if not Tunnel.is_valid_room(code):
+	if not LanDiscovery.valid_code(code):
 		_view.set_status("房间码是 8 位数字(例 00048213)")
 		return
 	_request("正在连接房间 %s 的网络…" % code, NetSession.join_room.bind(code, endpoint))
@@ -92,9 +91,7 @@ func _request(message: String, send: Callable) -> void:
 
 ## 持有效重连凭据回到大厅时先尝试恢复对局连接，失败则留在房间列表。
 func _auto_rejoin() -> void:
-	_request("正在重连到对局…", func() -> String:
-		var error := await NetSession.rejoin_room()
-		return NetSession.room_error(error))
+	_request("正在重连到对局…", NetSession.rejoin_room)
 
 func _show_room() -> void:
 	_stop_discovery()

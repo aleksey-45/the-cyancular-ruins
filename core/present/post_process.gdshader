@@ -6,7 +6,7 @@ uniform sampler2D screen_tex : filter_nearest, repeat_disable;
 
 uniform bool barrel_enabled;
 uniform float barrel_strength : hint_range(0.0, 0.5) = 0.3;
-// 用窗口与视口的尺寸比确定采样区域，中心始终对齐。
+// 用外层视口与世界视口的尺寸比确定采样范围，两个视口中心对齐。
 uniform vec2 crop_scale = vec2(1.0);
 uniform float desat : hint_range(0.0, 1.0) = 0.0;
 // 脚本在受击时提高此值，再逐帧降低，使红色闪光消退。
@@ -18,7 +18,7 @@ uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 将透支量换算�
 uniform float haste_dim : hint_range(0.0, 1.0) = 0.0;     // 加速时使暗色滤镜逐渐覆盖画面。
 uniform vec2 viewport_size = vec2(1920.0, 1440.0);        // 世界视口的宽度用于把像素偏移换算成 UV 偏移。
 uniform float loan_aberration = 5.0;                      // 透支达到上限时，红色和蓝色通道各自偏移的像素数。
-uniform vec2 intro_rewind = vec2(0.0);                    // 片头的播放时间与倒带强度。
+uniform vec2 intro_rewind = vec2(0.0);                    // 片头的播放时间与倒放特效强度。
 
 void fragment() {
 	vec2 uv = SCREEN_UV;
@@ -30,7 +30,7 @@ void fragment() {
 		uv = centered * (r_new / max(r, 0.0001)) + 0.5;
 	}
 
-	// 镜头畸变会用到窗口外的颜色，因此从较大的世界视口纹理取样。
+	// 鱼眼畸变会用到可见范围以外的像素，因此从较大的世界视口采样。
 	uv = (uv - 0.5) * crop_scale + 0.5;
 
 	float strength = intro_rewind.y;

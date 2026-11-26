@@ -3,6 +3,7 @@ extends MatchController
 
 const INTRO_VIEW := preload("res://scenes/match_view.tscn")
 
+var session: MatchHost
 var spec: WorldSpec
 var preview_minute := -1.0
 var _intro_enabled := false
@@ -18,11 +19,21 @@ static func create(document: Dictionary, spawn: Vector2i, weapons: Array[int], w
 	return level
 
 func _enter_tree() -> void:
-	session = MatchSession.open_local(spec, 1)
-	super()
+	session = MatchHost.new(spec, spec.roles[0])
+	_bind(session.world, spec.roles[0])
+
+func _physics_process(delta: float) -> void:
+	_step(_sample_input(delta))
+
+func _step(input: Array) -> void:
+	session.fixed_step({role: input})
+	_sampler.accept_local(world.sample())
 
 func _ready() -> void:
 	_mount_session()
+	_reset_sampler()
+	_sampler.accept_local(world.sample())
+	_view.pause.toggled.connect(_set_pause)
 	_presenter.preview_minute = preview_minute
 	if _intro_enabled:
 		_opening = true
@@ -61,7 +72,7 @@ func _begin_attempt(retry: bool) -> void:
 		await _play_intro(intro)
 	if retry:
 		restart_single()
-		_sampler.accept(session.fixed_step())
+		_step(ActorInput.neutral())
 		_camera.reset_follow()
 	_view.begin_intro_capture(spec.map)
 	set_process(true)
@@ -102,10 +113,12 @@ func _play_intro(intro: RunIntro) -> void:
 func _set_pause(open: bool) -> void:
 	if open:
 		_view.capture_intro_frame(true)
-	super(open)
+	controls.frozen = open
+	get_tree().paused = open
 
 func _leave_match() -> void:
 	_view.end_intro_capture(true)
+	get_tree().paused = false
 	super()
 
 func _notification(what: int) -> void:

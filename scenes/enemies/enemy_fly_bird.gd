@@ -8,18 +8,17 @@ var intent: Intent = Intent.SHOOT
 var _spawn_pos: Vector2 = Vector2.ZERO
 var _home_cell: Vector2i = Vector2i.ZERO
 var _shoot_timer: float = 0.0
-var _hover_anchor: Vector2 = Vector2.ZERO
 var _hover_side: float = 1.0
 var _strafe_target: Vector2 = Vector2.INF  # Vector2.INF 表示还没有选定投弹后的飞行目标。
 var _strafe_timer: float = 0.0
 
-# 视线检测结果最长复用 9 个物理帧。
+# 视线检测结果最多复用 9 个模拟帧。
 const SHOT_CLEAR_TTL_FRAMES: int = 9
 var _shot_clear_ok := false
 var _shot_clear_at_frame := -100000
 var _shot_clear_from := Vector2i(-1, -1)
 var _shot_clear_to := Vector2i(-1, -1)
-# 缓存按玩家所在的瓦片和默认投弹方向区分，避免连续重新选择从哪一侧投弹。
+# 玩家所在子格和默认投弹方向相同时，可短暂复用上一次选出的方位。
 var _side_cache := 1.0
 var _side_at_frame := -100000
 var _side_player_cell := Vector2i(-1, -1)
@@ -34,15 +33,15 @@ var _path: Array[Vector2i] = []
 var _path_index: int = 0
 var _path_target: Vector2i = Vector2i(-1, -1)  # 同一目标还有未走完的路径时，继续使用原路径。
 var _repath_timer: float = 0.0
-var _repath_phase: float = 0.0             # 每只飞鸟使用不同的寻路间隔，分散同一帧中的寻路请求。
+var _repath_phase: float = 0.0             # 为重新寻路间隔增加随机偏移，分散同一帧中的请求。
 var _escape_target: Vector2 = Vector2.INF  # 找不到路径时，飞鸟先尝试飞到这个临时目标绕过障碍。
 
 
 func _setup() -> void:
-	_rewind_fields.append_array([&"intent", &"_shoot_timer", &"_hover_anchor", &"_hover_side", &"_strafe_target",
+	_rewind_fields.append_array([&"intent", &"_shoot_timer", &"_hover_side", &"_strafe_target",
 			&"_strafe_timer", &"_shot_clear_ok", &"_shot_clear_at_frame", &"_shot_clear_from", &"_shot_clear_to",
 			&"_side_cache", &"_side_at_frame", &"_side_player_cell", &"_side_geo", &"_landing", &"_path",
-			&"_path_index", &"_path_target", &"_repath_timer", &"_repath_phase", &"_escape_target"])
+			&"_path_index", &"_path_target", &"_repath_timer", &"_escape_target"])
 	var bounds := kind.hulls[1].get_rect()
 	_fly_box_min = bounds.position * scale
 	_fly_box_max = bounds.end * scale
@@ -108,7 +107,7 @@ func _tick_fly(delta: float, dist: float) -> void:
 		return
 	_repath_timer -= delta
 	if _repath_timer <= 0.0:
-		_repath_timer = ECFG.fly_bird_repath_interval + _repath_phase
+		_schedule_repath()
 		_repath_to(terrain.cell(_shoot_pos() + Vector2.UP * ECFG.fly_bird_hover_altitude))
 	# 沿路径飞行或绕过障碍都不可行时，才直接飞向投弹点。
 	_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
@@ -129,7 +128,7 @@ func _tick_shoot(delta: float, dist: float) -> void:
 		_set_state(State.FLY)
 		_schedule_repath()
 		return
-	_update_hover_anchor()
+	var hover := _hover_position()
 	_shoot_timer -= delta
 	if _strafe_target != Vector2.INF:
 		_strafe_timer -= delta
@@ -137,7 +136,7 @@ func _tick_shoot(delta: float, dist: float) -> void:
 		if _strafe_timer <= 0.0 or _toroidal_dist_to(_strafe_target) <= ECFG.fly_bird_fly_speed * delta:
 			_strafe_target = Vector2.INF
 	else:
-		_glide_to(_hover_anchor, delta)
+		_glide_to(hover, delta)
 	if _shoot_timer <= 0.0:
 		# 投弹前重新检查视线。目标被挡住时，返回飞行状态寻找其他位置。
 		if not _shot_clear():
@@ -173,7 +172,7 @@ func _tick_return(delta: float, dist: float) -> void:
 	else:
 		_repath_timer -= delta
 		if _repath_timer <= 0.0:
-			_repath_timer = ECFG.fly_bird_repath_interval + _repath_phase
+			_schedule_repath()
 			# 玩家离得太远时，仍继续返回出生点，但暂时不重新寻路。
 			if dist <= ECFG.fly_bird_max_chase_distance:
 				_repath_to(_home_cell)
@@ -188,7 +187,7 @@ func _on_death() -> void:
 
 
 
-# 先检查玩家靠飞鸟这一侧的上方是否有空位，以及视线是否畅通。
+# 先检查玩家默认投弹侧的上方是否有空位，以及视线是否畅通。
 # 该侧不可用时检查另一侧，两侧都找不到合适位置时沿用默认方向。
 func _shoot_side() -> float:
 	var now := combat.tick
@@ -236,22 +235,18 @@ func _near_shoot_pos() -> bool:
 func _start_shoot() -> void:
 	_set_state(State.SHOOT)
 	_hover_side = _shoot_side()
-	_update_hover_anchor()
+	_hover_position()
 	_shoot_timer = 0.2
 
 
-func _update_hover_anchor() -> void:
-	# 默认在玩家斜上方悬停，原位置被地形占据时移到玩家另一侧。
-	var p := player.position
-	_hover_anchor = p + Vector2(_hover_side * ECFG.fly_bird_hover_offset_x,
-			-ECFG.fly_bird_hover_offset_y)
-	if TileDefs.is_blocked(terrain.material_at(terrain.cell(_hover_anchor))):
+func _hover_position() -> Vector2:
+	var offset := Vector2(_hover_side * ECFG.fly_bird_hover_offset_x, -ECFG.fly_bird_hover_offset_y)
+	if TileDefs.is_blocked(terrain.material_at(terrain.cell(player.position + offset))):
 		_hover_side = -_hover_side
-		_hover_anchor = p + Vector2(_hover_side * ECFG.fly_bird_hover_offset_x,
-				-ECFG.fly_bird_hover_offset_y)
+		offset.x = -offset.x
+	return player.position + offset
 
 
-# 飞鸟以固定速度靠近目标。本帧可以到达时，直接设置节点坐标，避免越过目标。
 func _glide_to(point: Vector2, delta: float) -> void:
 	var spd := ECFG.fly_bird_fly_speed
 	var to_target := ToroidalGrid.toroidal_delta_px(position, point, terrain.map_size)
@@ -271,7 +266,7 @@ func _start_strafe() -> void:
 	_strafe_timer = ECFG.fly_bird_strafe_duration
 
 
-# 只有与上次检测处在同一对子格而且缓存未到期，才继续使用上次的视线结果。
+# 飞鸟与玩家仍位于上次检测时的子格，且缓存未到期时，复用上一次视线检测结果。
 func _shot_clear() -> bool:
 	var from := terrain.cell(position)
 	var to := terrain.cell(player.position)
@@ -411,8 +406,6 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 
 
 func _find_escape_column() -> Vector2:
-	if terrain.empty():
-		return position
 	var cols := terrain.columns
 	var rows := terrain.rows
 	var bc := terrain.cell(position)
@@ -434,8 +427,6 @@ func _find_escape_column() -> Vector2:
 
 # 以飞行时的包围盒判断路径点是否有足够空间。地形、水和附近角色都可能挡住飞鸟。
 func _bird_can_pass(cell: Vector2i) -> bool:
-	if terrain.empty():
-		return false
 	var center := terrain.cell_center(cell)
 	var bounds := Rect2(center + _fly_box_min, _fly_box_max - _fly_box_min)
 	if terrain.rect_overlaps(bounds, true):
@@ -468,7 +459,7 @@ func _schedule_repath() -> void:
 
 
 func _repath_to(cell: Vector2i) -> void:
-	# 搜索未到达目标时，A* 仍可能返回一条通往最接近目标的可达瓦片的路径。
+	# 搜索未到达目标时，A* 仍可能返回通往最接近目标的可达子格的路径。
 	if cell == _path_target and not _path.is_empty():
 		return
 	_path_target = cell

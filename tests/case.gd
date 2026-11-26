@@ -4,6 +4,9 @@ enum WeaponType { PISTOL = 1, RIFLE, M82, S686, GRENADE, LASER, COMPOUND_BOW, M2
 
 class TestWorld extends Node2D:
 	var combat: CombatSimulator
+	var document: Dictionary
+	var terrain: Terrain:
+		get: return combat.terrain
 
 	func _exit_tree() -> void:
 		combat.close()
@@ -11,8 +14,6 @@ class TestWorld extends Node2D:
 var failures: Array[String] = []
 var checks := 0
 var _worlds: Array[Node] = []
-var _document: Dictionary
-var _terrain: Terrain
 
 ## 测试角色使用指定的碰撞层。设置会立即应用到物理服务器中的物理体。
 func collider(owner: Player, layer: int) -> Player:
@@ -24,7 +25,6 @@ func expect(condition: bool, message: String) -> void:
 	if not condition: failures.append(message)
 
 func wall_texture(elastic: bool = false) -> int:
-
 	for key in TileDefs._defs["tiles"]:
 		var material: Dictionary = TileDefs._defs["tiles"][key]
 		if material["type"] == "wall" and material["hp"] > 1 and material["bullet_destroyable"] \
@@ -64,13 +64,13 @@ func block_hp(terrain: Terrain, block: Vector2i) -> PackedInt32Array:
 	return result
 
 func _install_world(tree: SceneTree, map: Dictionary) -> TestWorld:
-	_document = map
-	_terrain = Terrain.new(map)
+	var terrain := Terrain.new(map)
 	var viewport := SubViewport.new()
-	viewport.world_2d = _terrain.physics.world
+	viewport.world_2d = terrain.physics.world
 	tree.root.add_child(viewport)
 	var node := TestWorld.new()
-	node.combat = CombatSimulator.new(_terrain)
+	node.document = map
+	node.combat = CombatSimulator.new(terrain, RandomNumberGenerator.new())
 	viewport.add_child(node)
 	_worlds.append(viewport)
 	return node
@@ -88,9 +88,9 @@ func player(parent: TestWorld, role: int = 1) -> Player:
 	return actor
 
 func arena(mode: String, roles: Array, teams: Dictionary, options: Dictionary,
-		path := "res://maps/newfactory.cyrm") -> MatchSession:
-	var spec := WorldSpec.new(CyrmMap.load_file(path), mode, roles, teams, options, 1729)
-	return MatchSession.open_local(spec)
+		path := "res://maps/newfactory.cyrm") -> MatchHost:
+	var spec := WorldSpec.arena(CyrmMap.load_file(path), mode, roles, teams, options, 1729)
+	return MatchHost.new(spec)
 
 func arena_round(world: MatchWorld) -> Dictionary:
 	return RoundProjection.round_view(world.spec, world.capture())
@@ -109,5 +109,3 @@ func players_on_map_points(authority: MatchWorld, roles: Array, points: Array) -
 func cleanup() -> void:
 	for node in _worlds: node.free()
 	_worlds.clear()
-	_terrain = null
-	_document = {}

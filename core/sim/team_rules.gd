@@ -8,7 +8,7 @@ const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
 const MIN_TEAM := 1
 const MAX_TEAM := 5
-const MAX_TOTAL := 10
+const MAX_TOTAL := 2 * MAX_TEAM
 const HP_PER_PLAYER := 5
 const HP_BONUS_CAP := 4
 const DAMAGE_DIFF_MIN := 3
@@ -27,7 +27,7 @@ static func team_counts(teams: Dictionary) -> Dictionary:
 	var b: int = counts[2]
 	if a < MIN_TEAM or b < MIN_TEAM:
 		return {}
-	if a > MAX_TEAM or b > MAX_TEAM or a + b > MAX_TOTAL:
+	if a > MAX_TEAM or b > MAX_TEAM:
 		return {}
 	return counts
 
@@ -40,8 +40,7 @@ static func team_difference(counts: Dictionary) -> int:
 
 ## 回合目标分为玩家总数加 3，取值范围为 5–13。
 static func kills_to_win(total: int) -> int:
-	assert(total >= MIN_TEAM * 2 and total <= MAX_TOTAL, "TeamRules: 总人数 %d 超出 2~%d" % [total, MAX_TOTAL])
-	return clampi(total + 3, 5, 13)
+	return total + 3
 
 ## 两队人数相同不需要补偿，因此用 0 表示没有人数较少的队伍。
 static func disadvantaged_team(counts: Dictionary) -> int:

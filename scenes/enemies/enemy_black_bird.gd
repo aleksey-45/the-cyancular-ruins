@@ -9,7 +9,7 @@ var _wander_timer: float = 0.0
 var _wander_dir: float = 1.0
 var _wander_idle_timer: float = 0.0
 var _flank_check_timer: float = 0.0
-var _flank_cell: Vector2i = Vector2i(-1, -1)  # (-1, -1) 表示尚未找到可以传送的瓦片。
+var _flank_cell: Vector2i = Vector2i(-1, -1)  # (-1, -1) 表示尚未找到可用于传送的落点。
 var _landing_timer: float = 0.0
 var _prep_timer: float = 0.0
 var _wait_land: bool = false
@@ -171,7 +171,7 @@ func _tick_back_hop() -> void:
 		_flank_check_timer = ECFG.black_bird_flank_check_interval
 
 
-# 可用的落点在玩家另一侧，距玩家 128 至 384 像素，并且能直接看到玩家所在的瓦片。
+# 默认在玩家的另一侧寻找距玩家所在子格中心 128 至 384 像素的落点，落点与玩家之间须有无遮挡的视线。
 func _find_flank_cell() -> bool:
 	var player_cell := terrain.cell(player.position)
 	var player_px := terrain.cell_center(player_cell)
@@ -182,7 +182,7 @@ func _find_flank_cell() -> bool:
 	var sy := signf(off.y)
 	var use_x := absf(off.x) >= absf(off.y)
 	if absf(off.x) < 1.0 and absf(off.y) < 1.0:
-		# 如果乌鸫和玩家在同一块瓦片，则在玩家朝向的那一侧寻找落点。
+		# 乌鸫和玩家位于同一子格时，改为在玩家面朝的方向寻找落点。
 		sx = -player.facing_direction
 		sy = 0.0
 		use_x = true

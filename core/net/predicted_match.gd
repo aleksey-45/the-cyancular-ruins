@@ -1,4 +1,4 @@
-class_name MatchSession
+class_name PredictedMatch
 extends RefCounted
 
 const KEEP := 64
@@ -8,16 +8,12 @@ const REMOTE_MOVEMENT := ActorInput.BIT_UP | ActorInput.BIT_DOWN
 const Actor := preload("res://core/sim/player_state_schema.gd")
 
 var world: MatchWorld
-var role := 0
-var remote := false
+var role: int
+var _current: Dictionary
+var _previous: Dictionary
 var latest_authority: Dictionary = {}
 var last_input_target := 0
 var replay_ticks := 0
-var outgoing_input: Array
-
-var _buffers: Dictionary[int, InputBuffer] = {}
-var _schedulers: Dictionary[int, InputScheduler] = {}
-var _commands: Array = []
 var _pending: Dictionary[int, Dictionary] = {}
 var _terrain_patches: Dictionary[int, Dictionary] = {}
 var _confirmed_terrain := 0
@@ -28,30 +24,16 @@ var _seq := 0
 var _history: Array = []
 var _actions: Array = []
 var _discarded := 0
-var _current: Dictionary = {}
-var _previous: Dictionary = {}
 
-static func open_local(spec: WorldSpec, observing_role := 0) -> MatchSession:
-	var session := MatchSession.new()
-	session.world = MatchWorld.create(spec)
-	session.role = observing_role
-	if session.world.problem.is_empty():
-		for id: int in spec.roles:
-			session._buffers[id] = InputBuffer.new()
-		if observing_role != 0:
-			session._current = session.world.sample()
-			session._previous = session._current
-	return session
-
-static func open_remote(baseline: Dictionary, ping_ms: int) -> MatchSession:
-	var config := WorldSpec.new(baseline["map"], baseline["mode"], baseline["roles"],
+func _init(baseline: Dictionary, ping_ms: int) -> void:
+	var config := WorldSpec.arena(baseline["map"], baseline["mode"], baseline["roles"],
 			baseline["teams"], baseline["options"], baseline["seed"])
-	var session := MatchSession.new()
-	session.world = MatchWorld.create(config)
-	session.role = baseline["role"]
-	session.remote = true
-	session.install(baseline, ping_ms)
-	return session
+	world = MatchWorld.new(config)
+	role = baseline["role"]
+	install(baseline, ping_ms)
+
+func baseline_view() -> Dictionary:
+	return {"previous": _previous, "current": _current, "authority": latest_authority}
 
 func install(baseline: Dictionary, ping_ms: int) -> void:
 	var frame: Dictionary = baseline["frame"]
@@ -61,9 +43,6 @@ func install(baseline: Dictionary, ping_ms: int) -> void:
 	terrain.reset()
 	_confirmed_terrain = terrain.apply_at(terrain.version, baseline["sub_hp"])
 	_adopt(frame, ping_ms, true)
-
-func enqueue(command: int, seat := 0) -> void:
-	_commands.append([command, seat])
 
 func receive_state(frame: Dictionary) -> void:
 	var state: Dictionary = frame["checkpoint"]
@@ -75,64 +54,11 @@ func receive_state(frame: Dictionary) -> void:
 func receive_terrain(patch: Dictionary) -> void:
 	_terrain_patches[patch["version"]] = patch["cells"]
 
-func accept_input(seat: int, packet: Array, received_us: int) -> void:
-	if world.rules.phase == MatchRules.Phase.MATCH_OVER:
-		return
-	if not _schedulers.has(seat):
-		_schedulers[seat] = InputScheduler.new()
-	if not _schedulers[seat].submit(_buffers[seat], packet, world.tick, received_us):
-		reset_input(seat, true)
-
-func reset_input(seat: int, new_epoch: bool) -> void:
-	_schedulers.erase(seat)
-	var buffer := _buffers[seat]
-	buffer.reset(buffer.epoch + int(new_epoch))
-
-func packet(grace: Dictionary) -> Dictionary:
-	var inputs := {}
-	for id: int in world.players:
-		var buffer := _buffers[id]
-		inputs[id] = [buffer.epoch, buffer.action_ack] + buffer._last
-	return {"checkpoint": world.capture(), "inputs": inputs, "grace": grace, "input_feedback": PackedByteArray()}
-
-func feedback(seat: int) -> PackedByteArray:
-	return _schedulers[seat].feedback if _schedulers.has(seat) else PackedByteArray()
-
-func fixed_step(seat_intents: Dictionary = {}) -> Dictionary:
-	var inputs := {}
-	var before := {}
-	for id: int in world.players:
-		var actor := world.players[id]
-		before[id] = [actor.life, actor.rewinding]
-		inputs[id] = seat_intents[id] if seat_intents.has(id) else _buffers[id].take(world.tick + 1)
-	world.advance(inputs, _commands)
-	_commands.clear()
-	for id: int in before:
-		if not world.players.has(id):
-			_buffers.erase(id)
-			_schedulers.erase(id)
-		else:
-			var actor := world.players[id]
-			if actor.life != before[id][0] or (before[id][1] and not actor.rewinding):
-				reset_input(id, true)
-	if role == 0:
-		return {}
-	_previous = _current
-	_current = world.sample()
-	return view()
-
-func view() -> Dictionary:
-	return {"previous": _previous, "current": _current}
-
-func close() -> void:
-	world.close()
-
 func predict(record: Array) -> Dictionary:
 	_record_input(record)
-	outgoing_input = [_history.slice(-InputBuffer.REDUNDANCY), _actions]
 	var limit: int = latest_authority["checkpoint"]["tick"] + MAX_REPLAY
 	_advance_prediction(_clock.advance(ActorStep.DT, world.tick, limit))
-	return view()
+	return {"previous": _previous, "current": _current, "input": [_history.slice(-InputBuffer.REDUNDANCY), _actions]}
 
 ## 用最新可用的权威快照校正预测。回滚后重放仍有效的未确认输入，复活时从新状态开始。
 func reconcile(ping_ms: int) -> Dictionary:
@@ -264,13 +190,13 @@ func _record_input(record: Array) -> void:
 		_discarded = _history.pop_front()[InputBuffer.SEQ]
 
 func _advance_prediction(end: int) -> void:
-	if end <= world.tick or world.rules.phase == MatchRules.Phase.MATCH_OVER:
+	if end <= world.tick or world.finished:
 		return
 	_prediction.push([_history, _actions], world.tick)
 	var checkpoint: Dictionary = latest_authority["checkpoint"]
 	var at: int = checkpoint["tick"]
 	var confirmed: Dictionary = latest_authority["inputs"]
-	while world.tick < end and world.rules.phase != MatchRules.Phase.MATCH_OVER:
+	while world.tick < end and not world.finished:
 		var next := world.tick + 1
 		var inputs := {role: _prediction.take(next)}
 		for id: int in world.players:

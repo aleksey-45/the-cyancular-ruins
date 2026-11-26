@@ -1,11 +1,8 @@
 class_name PvpSession
 extends RefCounted
 
-const MODE_PVP := WorldSpec.DUEL
-const MODE_ROYALE := WorldSpec.ROYALE
-const MODE_TEAM := WorldSpec.TEAM
-const MODE_NAMES := {MODE_PVP: "1v1", MODE_TEAM: "团队对抗", MODE_ROYALE: "大乱斗"}
-const BETA_MODE_NAMES := {MODE_PVP: "Beta 1v1", MODE_TEAM: "时空团队对抗", MODE_ROYALE: "错乱大乱斗"}
+const MODE_NAMES := {WorldSpec.DUEL: "1v1", WorldSpec.TEAM: "团队对抗", WorldSpec.ROYALE: "大乱斗"}
+const BETA_MODE_NAMES := {WorldSpec.DUEL: "Beta 1v1", WorldSpec.TEAM: "时空团队对抗", WorldSpec.ROYALE: "错乱大乱斗"}
 
 static var player_name := "Anon"
 static var beta_mode := false
@@ -23,9 +20,6 @@ static func mode_name(mode: String, beta: bool = false) -> String:
 
 static func can_rejoin() -> bool:
 	return not room_code.is_empty() and not str(room.get("token", "")).is_empty()
-
-static func can_rejoin_to(code: String, mode: String) -> bool:
-	return can_rejoin() and room_code == code and room_mode == mode and room.get("beta", false) == beta_mode
 
 static func rejoin_payload() -> Dictionary:
 	return {"code": room_code, "token": room["token"]} if can_rejoin() else {}

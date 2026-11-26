@@ -14,7 +14,7 @@ func _world_rewind(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
 	var sim := parent.combat
-	sim.time_field = WorldTime.new(GrainAccount.new())
+	sim.time_field = WorldTime.new(1)
 	var bird := sim.add_enemy("jump_bird", actor, Vector2(300, 120))
 	bird.velocity = Vector2(12, -7)
 	var bird_hp := bird.hp
@@ -40,8 +40,8 @@ func _world_rewind(tree: SceneTree) -> void:
 	sim.tick += 1
 	_record_time(sim, actor, dt)
 	var sub := Vector2i(8, 12)
-	var wall_hp := _terrain.get_hp(sub)
-	_terrain.apply_at(_terrain.version, {sub: 0})
+	var wall_hp := parent.terrain.get_hp(sub)
+	parent.terrain.apply_at(parent.terrain.version, {sub: 0})
 	sim.tick += 1
 	var elite := sim.add_enemy("black_bird", actor, Vector2(100, 128)) as EnemyBlackBird
 	var elite_hp := elite.hp
@@ -49,7 +49,7 @@ func _world_rewind(tree: SceneTree) -> void:
 	sim.hit_rewound_elites(rewind._elite_hits)
 	expect(actor.position == initial, "single-player gameplay rewind restores the actor")
 	var restored: BulletBody = sim.projectiles[id]
-	expect(_terrain.get_hp(sub) == wall_hp, "entering rewind seals and restores the last live tick's terrain")
+	expect(parent.terrain.get_hp(sub) == wall_hp, "entering rewind seals and restores the last live tick's terrain")
 	expect(elite.hp == elite_hp - restored.hit_damage, "a rewound projectile hits an elite added after recording")
 	rewind.rewind(sim, actor, dt)
 	sim.hit_rewound_elites(rewind._elite_hits)
@@ -81,7 +81,7 @@ func _rewound_blast(tree: SceneTree) -> void:
 	_place(actor, Vector2(900, 544))
 	actor.gravity = 0.0
 	var sim := parent.combat
-	sim.time_field = WorldTime.new(GrainAccount.new())
+	sim.time_field = WorldTime.new(1)
 	var rewind := sim.time_field
 	var dt := 1.0 / TCFG.SNAP_HZ
 	var wall := block_hp(sim.terrain, cell)
@@ -143,7 +143,7 @@ func _rewound_enemy_action(tree: SceneTree) -> void:
 	_place(actor, Vector2(400, 320))
 	actor.gravity = 0.0
 	var sim := parent.combat
-	sim.time_field = WorldTime.new(GrainAccount.new())
+	sim.time_field = WorldTime.new(1)
 	var jumper := sim.add_enemy("jump_bird", actor, Vector2(480, 320)) as EnemyJumpBird
 	jumper.state = EnemyBase.State.LUNGE_WINDUP
 	jumper._state_timer = ActorStep.DT
@@ -219,7 +219,7 @@ func _enemy_time(tree: SceneTree) -> void:
 	bird.is_dead = true
 	bird.use_gravity = false
 	bird.knock_decay_rate = 0.0
-	bird.combat.time_field = WorldTime.new(GrainAccount.new())
+	bird.combat.time_field = WorldTime.new(1)
 	bird.time_field.mode = WorldTime.Mode.HASTE
 	for elite in [false, true]:
 		bird.kind.elite = elite
@@ -230,7 +230,7 @@ func _enemy_time(tree: SceneTree) -> void:
 		expect(is_equal_approx(bird.position.x - 200.0, expected) and bird.velocity.x == 60.0,
 				"enemy horizontal displacement uses one time multiplier (elite=%s)" % elite)
 	var flyer := parent.combat.add_enemy("fly_bird", target, Vector2.ZERO) as EnemyFlyBird
-	flyer.position = Vector2(_terrain.map_size.x - 8, 80)
+	flyer.position = Vector2(parent.terrain.map_size.x - 8, 80)
 	flyer.stance = 1
 	flyer._glide_to(Vector2(8, 80), ActorStep.DT)
 	expect(flyer.hull == flyer.kind.hulls[1] and flyer.velocity.x > 0.0,
@@ -248,7 +248,7 @@ func _enemy_time(tree: SceneTree) -> void:
 	target.position.x = 340
 	expect(not flyer.touches_player(), "moving out immediately ends contact")
 	flyer.position = Vector2(2, 2)
-	_place(target, _terrain.map_size - Vector2(8, 8))
+	_place(target, parent.terrain.map_size - Vector2(8, 8))
 	expect(flyer.touches_player(), "a player's diagonal mirror participates in enemy contact")
 	flyer.position = Vector2(200, 80)
 	_place(target, Vector2(200, 166))
@@ -276,8 +276,9 @@ func _enemy_time(tree: SceneTree) -> void:
 func _grain_rewards(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var combat := parent.combat
-	var account := GrainAccount.new(0.0)
-	var field := WorldTime.new(account)
+	var field := WorldTime.new(1)
+	var account := field.account
+	account.balance = 0.0
 	combat.time_field = field
 	var elite := combat.add_enemy("black_bird", player(parent), Vector2.ZERO) as EnemyBlackBird
 	elite._begin_death()
@@ -296,7 +297,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	var first := player(parent, 1)
 	var second := player(parent, 2)
 	var sim := parent.combat
-	var time := PersonalTime.new({}, [1, 2])
+	var time := PersonalTime.new(TimeRules.normalized(), [1, 2])
 	var dt := 1.0 / TCFG.SNAP_HZ
 	var id := ShotRules.shot_id(first.role, 1)
 	var shell := sim.spawn_projectile(id, WeaponType.GRENADE, first, Vector2(180, 64), Vector2.RIGHT)
@@ -332,7 +333,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 			"personal rewind restores just its player and the motion of surviving owned projectiles")
 	ShotRules._projectile_hit(sim, shell, Vector2.RIGHT)
 	expect(shell.direct_hit and second.sim_hp == hit_hp and not sim.projectiles.has(gone) and sim.projectiles.has(late_id)
-			and sim.pending_blasts == pending and sim.terrain.get_hp(sub) == 0 and first.waterproof == first.max_waterproof
+			and sim.pending_blasts == pending and sim.terrain.get_hp(sub) == 0 and first.waterproof == CFG.player_waterproof_max
 			and first.equipped == null and first.shot_serial == 8 and sim.ground.items.size() == 1,
 			"personal restore preserves world effects, settled hits, projectile lifetimes, weapon ownership and shot IDs")
 	time.advance(sim, {1: NEUTRAL_INPUT, 2: _attack(ActorInput.BIT_REWIND, 0)}, 11)
@@ -344,12 +345,12 @@ func _personal_rewind() -> void:
 	var mode := WorldSpec.ROYALE
 	var host := arena(mode, [1, 2, 3], {}, RoomOptions.normalized(mode, {"max_players": 3, "beta": true}))
 	var server := host.world
-	expect(server.problem.is_empty(), "authority creates an arena with personal time skills")
+	expect(server.spec.problem().is_empty(), "authority creates an arena with personal time skills")
 	server.rules.phase = MatchRules.Phase.PLAYING
 	var first := server.players[1]
 	var second := server.players[2]
 	first.weapons.set_initial_inventory([WeaponType.RIFLE])
-	var epoch := host._buffers[1].epoch
+	var epoch := host.remote[1].epoch
 	for at in range(1, 11):
 		first.sim_hp = 20 + at
 		second.sim_hp = 30 + at
@@ -366,13 +367,13 @@ func _personal_rewind() -> void:
 	expect(first.rewinding and second.rewinding and first.sim_hp == 23 and second.sim_hp == 36,
 			"two concurrent personal rewinds select different moments")
 	host.fixed_step({1: _attack(ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK), 2: _attack(ActorInput.BIT_REWIND, 0)})
-	expect(not first.rewinding and host._buffers[1].epoch == epoch + 1 and first.shot_serial == 0
-			and second.rewinding and host._buffers[2].epoch == epoch and server.tick == 13,
+	expect(not first.rewinding and host.remote[1].epoch == epoch + 1 and first.shot_serial == 0
+			and second.rewinding and host.remote[2].epoch == epoch and server.tick == 13,
 			"releasing one skill discards stale actions and leaves the other branch and input epoch alone")
 	second.force_down()
 	second.respawn_tick = server.tick + 1
 	host.fixed_step()
-	expect(not second.rewinding and host._buffers[2].epoch == epoch + 1,
+	expect(not second.rewinding and host.remote[2].epoch == epoch + 1,
 			"respawning during a rewind starts one new input epoch")
 	host.fixed_step({2: _attack(ActorInput.BIT_REWIND, 0)})
 	expect(not second.rewinding and second.sim_hp == second.sim_max_hp,
@@ -380,4 +381,4 @@ func _personal_rewind() -> void:
 	host.enqueue(MatchWorld.Command.LEAVE, 3)
 	host.fixed_step()
 	expect(not server.personal_time.histories.has(3), "a departing player releases its history")
-	host.close()
+	host.world.close()

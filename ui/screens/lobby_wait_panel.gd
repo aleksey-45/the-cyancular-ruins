@@ -36,8 +36,7 @@ func _init(initial_hue: float) -> void:
 
 
 func _ready() -> void:
-	UiDesign.skin_menu_panel(self, PANEL_PAD)
-	var body := get_node("Body") as Container
+	var body := UiDesign.skin_menu_panel(self, PANEL_PAD)
 	var page := VBoxContainer.new()
 	page.name = "Page"
 	page.custom_minimum_size.x = PANEL_MIN_W

@@ -25,13 +25,17 @@ func step(delta: float) -> void:
 	for item: WeaponPickup in items.values():
 		item.simulate_tick(delta)
 
-func capture() -> Dictionary:
+func sample() -> Dictionary:
 	var drops := {}
 	for item: WeaponPickup in items.values():
 		drops[item.inst] = item.capture()
 	return drops
 
-func restore(rows: Dictionary, at: int, next_id: int) -> void:
+func capture() -> Dictionary:
+	return {"pickups": sample(), "pickup_tick": tick, "pickup_next": _next_id}
+
+func restore(state: Dictionary) -> void:
+	var rows: Dictionary = state["pickups"]
 	for id: int in items.keys():
 		if not rows.has(id) or rows[id][WeaponPickup.TYPE] != items[id].type_id:
 			items[id].release()
@@ -44,17 +48,17 @@ func restore(rows: Dictionary, at: int, next_id: int) -> void:
 			items[id] = WeaponPickup.new(_terrain, id, row[WeaponPickup.TYPE], row[WeaponPickup.AMMO],
 					row[WeaponPickup.POS], row[WeaponPickup.VEL])
 		items[id].restore(row)
-	tick = at
-	_next_id = next_id
+	tick = state["pickup_tick"]
+	_next_id = state["pickup_next"]
 
 func clear() -> void:
 	for item: WeaponPickup in items.values():
 		item.release()
 	items.clear()
 
-static func available(player: Player, type: int, owner: int, unlock: int, now: int, distance_sq: float) -> bool:
-	return distance_sq <= CFG.weapon_pickup_radius ** 2 and (owner != player.role or now >= unlock) \
-			and player.weapons.is_type_enabled(type)
+static func available(role: int, enabled: Array, type: int, owner: int, unlock: int, now: int, distance_sq: float) -> bool:
+	return distance_sq <= CFG.weapon_pickup_radius ** 2 and (owner != role or now >= unlock) \
+			and type in enabled
 
 func nearest(player: Player) -> WeaponPickup:
 	var best: WeaponPickup
@@ -62,7 +66,7 @@ func nearest(player: Player) -> WeaponPickup:
 	for item: WeaponPickup in items.values():
 		var offset := ToroidalGrid.toroidal_delta_px(player.position, item.position, _terrain.map_size)
 		var distance := offset.length_squared()
-		if available(player, item.type_id, item.locked_role, item.unlock_tick, tick, distance) \
+		if available(player.role, player.weapons.enabled_types, item.type_id, item.locked_role, item.unlock_tick, tick, distance) \
 				and (best == null or distance < best_distance or (distance == best_distance and item.inst < best.inst)):
 			best_distance = distance
 			best = item
@@ -80,10 +84,8 @@ func handle_actions(player: Player, record: Array) -> void:
 				_drop(player, result["dropped"])
 	if pressed & ActorInput.BIT_DROP:
 		var inst: int = record[ActorInput.WINST]
-		if inst > 0:
-			player.weapons.equip_inst(inst)
-			if player.weapons.current_inst() != inst:
-				return
+		if inst > 0 and not player.weapons.equip_inst(inst):
+			return
 		_drop(player, player.weapons.drop_current())
 
 func _drop(player: Player, item: Dictionary) -> void:

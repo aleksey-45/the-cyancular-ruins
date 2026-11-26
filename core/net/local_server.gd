@@ -17,7 +17,7 @@ static func launch_and_connect() -> int:
 	args.append_array(["--port", str(port)])
 	var generation := NetSession.generation
 	_owned_pid = NetSession.launch(exe, args)
-	var ready := _owned_pid > 0 and await NetBus.connect_local(port, PROBE_TIMEOUT_MS, NetSession.running.bind(_owned_pid)) == OK
+	var ready := _owned_pid > 0 and await NetBus.connect_server("127.0.0.1", port, PROBE_TIMEOUT_MS, NetSession.running.bind(_owned_pid)) == OK
 	if generation != NetSession.generation:
 		return -1
 	if ready:

@@ -59,11 +59,11 @@ static func _build(kind: String) -> PackedFloat32Array:
 	match kind:
 		"shoot":        return _sweep_square(900.0, 240.0, 0.09, 0.5, 0.10)
 		"shoot_heavy":  return _sweep_square(240.0, 45.0, 0.30, 0.3, 0.10)
-		"shotgun":      return _noise_burst(0.20, 1400.0, 0.6, 0.35)
+		"shotgun":      return _noise_burst(0.20, 0.6, 0.35)
 		"bow":          return _sweep_square(520.0, 140.0, 0.11, 0.25, 0.02)
 		"hit":          return _sweep_square(210.0, 70.0, 0.07, 0.5, 0.12)
 		"hurt":         return _sweep_square(430.0, 110.0, 0.18, 0.4, 0.10)
-		"explosion":    return _noise_burst(0.55, 900.0, 1.0, 0.12)
+		"explosion":    return _noise_burst(0.55, 1.0, 0.12)
 		"kill":         return _arp([620.0, 440.0, 300.0], 0.07, 0.5)
 		"switch":       return _arp([500.0, 820.0], 0.05, 0.5)
 		"deny":         return _sweep_square(150.0, 110.0, 0.12, 0.25, 0.0)
@@ -102,17 +102,13 @@ static func _sweep_square(freq0: float, freq1: float, dur: float, duty: float,
 	return out
 
 
-# 将随机值与上一次的结果插值以平滑噪声，再让振幅按指数衰减。
-# lp 决定每次采样保留多少上一次的结果，decay 决定衰减速度。
-static func _noise_burst(dur: float, lp: float, amp0: float, decay: float) -> PackedFloat32Array:
+static func _noise_burst(dur: float, amp0: float, decay: float) -> PackedFloat32Array:
 	var n := int(dur * RATE)
 	var out := PackedFloat32Array()
 	out.resize(n)
-	var state := 0.0
 	for i in n:
 		var t := float(i) / float(n)
-		state = lerp(state, _rng.randf_range(-1.0, 1.0), clampf(lp * (1.0 - t * 0.7), 0.05, 1.0))
-		out[i] = state * amp0 * exp(-decay * t * 6.0)
+		out[i] = _rng.randf_range(-1.0, 1.0) * amp0 * exp(-decay * t * 6.0)
 	return out
 
 

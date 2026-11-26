@@ -7,19 +7,7 @@ signal submitted(mode: String, options: Dictionary)
 
 signal preference_changed(value: Variant, key: StringName)
 
-const TIME_FIELDS := [
-	["initial", "初始颗粒", 50.0],
-	["cap", "颗粒上限", 100.0],
-	["rewind_burn", "回溯燃烧/秒", 5.0],
-	["haste_burn", "加速燃烧/秒", 5.0],
-	["window", "短时额度", 10.0],
-	["regen", "回复/秒", 5.0],
-	["kill_ratio", "击杀获取", 5.0],
-	["block_gain", "拆砖获取/子格", 1.0],
-	["damage_gain", "伤害获取/点", 1.0],
-]
-
-const MODES: Array[String] = [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
+const MODES: Array[String] = [WorldSpec.DUEL, WorldSpec.TEAM, WorldSpec.ROYALE]
 
 const DEFAULT_MAX_PLAYERS := 4.0
 
@@ -39,7 +27,7 @@ const CANCEL_MIN := Vector2(UiDesign.SP_10 * 3 + UiDesign.SP_7, UiDesign.SP_10 +
 const SUBMIT_MIN := Vector2(UiDesign.SP_10 * 5, UiDesign.SP_10 + UiDesign.SP_2)
 
 var _prefs: Dictionary
-var _mode := PvpSession.MODE_PVP
+var _mode := WorldSpec.DUEL
 var _mode_buttons: Dictionary = {}
 var _collision := UiDesign.ui_check()
 var _lan_public := UiDesign.ui_check()
@@ -59,8 +47,7 @@ func _init(preferences: Dictionary) -> void:
 
 
 func _ready() -> void:
-	UiDesign.skin_menu_panel(self, PANEL_PAD)
-	var body := get_node("Body") as Container
+	var body := UiDesign.skin_menu_panel(self, PANEL_PAD)
 	var page := VBoxContainer.new()
 	page.name = "Page"
 	page.add_theme_constant_override("separation", UiDesign.SP_6)
@@ -156,8 +143,8 @@ func _build_options() -> VBoxContainer:
 		beta.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		beta.add_theme_constant_override("separation", UiDesign.SP_3)
 		scroll.add_child(beta)
-		for spec: Array in TIME_FIELDS:
-			_time_slider(beta, spec[0], spec[1], spec[2])
+		for field in TimeRules.FIELDS:
+			if TimeRules.FIELDS[field][TimeRules.LABEL] != "": _time_slider(beta, field)
 	return options
 
 
@@ -235,23 +222,22 @@ func _slider(row: BoxContainer, text: String, bounds: Vector2i, initial: float,
 	return slider
 
 
-func _time_slider(parent: BoxContainer, field: String, title: String, step: float) -> void:
-	# 击杀获取倍率按百分比显示。
-	var units := 100.0 if field == "kill_ratio" else 1.0
-	var suffix := "%" if units == 100.0 else ""
+func _time_slider(parent: BoxContainer, field: String) -> void:
 	var rule: Array = TimeRules.FIELDS[field]
+	var units: float = rule[TimeRules.DISPLAY_SCALE]
+	var suffix := "%" if units == 100.0 else ""
 	var row := HBoxContainer.new()
 	row.custom_minimum_size = Vector2(0, ROW_MIN_H)
 	row.add_theme_constant_override("separation", ROW_GAP)
 	parent.add_child(row)
-	var label := UiDesign.ui_label(title, "body")
+	var label := UiDesign.ui_label(rule[TimeRules.LABEL], "body")
 	label.custom_minimum_size.x = FORM_LABEL_W
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(label)
 	var slider := HSlider.new()
 	slider.min_value = rule[TimeRules.MINIMUM] * units
 	slider.max_value = rule[TimeRules.MAXIMUM] * units
-	slider.step = step
+	slider.step = rule[TimeRules.STEP]
 	slider.value = _prefs["time"][field] * units
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -279,7 +265,7 @@ func _choose_mode(mode: String) -> void:
 	# 设置 button_pressed 会通知 ButtonGroup 取消原模式的选中状态。
 	for key: String in _mode_buttons:
 		(_mode_buttons[key] as Button).button_pressed = key == mode
-	var fields: Array = RoomOptions.MODE_FIELDS.get(mode, [])
+	var fields: Array = RoomOptions.MODE_FIELDS[mode]
 	_limits.visible = fields.has("max_players")
 	_duration.visible = fields.has("match_time")
 	_heal_row.visible = fields.has("round_full_heal")
@@ -292,10 +278,10 @@ func _submit() -> void:
 	var selected := {"disabled_weapons": _weapons.disabled_weapons(),
 		"max_players": int(_max_players.value), "match_time": int(_match_time.value) * 60,
 		"round_full_heal": _full_heal.button_pressed}
-	for key in RoomOptions.MODE_FIELDS.get(_mode, []):
+	for key in RoomOptions.MODE_FIELDS[_mode]:
 		options[key] = selected[key]
 	if not _prefs["time"].is_empty():
-		options.merge({"beta": true, "time": TimeRules.normalized(_prefs["time"])})
+		options.merge({"beta": true, "time": _prefs["time"]})
 	submitted.emit(_mode, options)
 
 

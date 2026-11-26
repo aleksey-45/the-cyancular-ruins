@@ -3,7 +3,6 @@ extends RefCounted
 
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
-enum Mode { SOLO, DUEL, TEAM, ROYALE }
 
 class Pose:
 	var id: int
@@ -31,8 +30,8 @@ class Pose:
 	var team: int
 	var health := -1.0
 
-	func name_color(mode: Mode) -> Color:
-		if mode == Mode.ROYALE:
+	func name_color(mode: String) -> Color:
+		if mode == WorldSpec.ROYALE:
 			var base := UiDesign.C_TEAM_A
 			return Color.from_hsv(fposmod(base.h + hue, 1.0), base.s, base.v)
 		return UiDesign.C_TEAM_A if team == 1 else UiDesign.C_TEAM_B
@@ -49,7 +48,7 @@ class Clock:
 
 var now := 0.0
 var day_minute := Daylight.minute_at(0.0)
-var mode := Mode.SOLO
+var mode := WorldSpec.SOLO
 var focus: Vector2
 var actors: Array[Pose] = []
 # 掉落物按类型、显示位置和可拾取状态记录。弹丸按 ID、类型、显示位置和旋转角度记录。
@@ -66,7 +65,7 @@ var max_oxygen: int
 var downed: bool
 var hit_ratio := 0.0
 var kills := 0
-# 武器栏使用 WeaponInventory.cell_layout() 的返回值。剩余弹药和弹匣容量另存为字段。
+# 武器栏使用 WeaponInventory.layout() 的返回值。剩余弹药和弹匣容量另存为字段。
 var inventory := PackedInt32Array()
 var ammo := -1
 var magazine := 0
@@ -77,8 +76,8 @@ var radar_players: bool
 var cues: Array[Array] = []
 var round: PvpHud.Round
 
-func begin(delta: float, local_at: Vector2) -> void:
-	now += delta
+func begin(at: float, local_at: Vector2) -> void:
+	now = at
 	focus = local_at
 	actors.clear()
 	pickups.clear()

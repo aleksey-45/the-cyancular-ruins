@@ -23,17 +23,6 @@ static var _code := ""
 static var _cli_path := ""
 
 
-static func is_valid_room(s: String) -> bool:
-	if s.length() != ROOM_DIGITS:
-		return false
-	for i in range(s.length()):
-		var c := s[i]
-		if c < "0" or c > "9":
-			return false
-	return true
-
-
-## 房主节点的名称由前缀和游戏端口组成。名称不符合格式或端口超出有效范围时返回 -1。
 static func host_port_of(hostname: String) -> int:
 	if not hostname.begins_with(Meta.HOST_PREFIX):
 		return -1
@@ -82,11 +71,11 @@ static func start_client(code: String, deadline := 0) -> Dictionary:
 	if not error.is_empty():
 		stop()
 		return {"error": error}
-	return {"port": _forward_port, "host_ip": _forward_host}
+	return {"port": _forward_port}
 
 
 static func _launch(code: String, host_port: int) -> String:
-	if not is_valid_room(code):
+	if not LanDiscovery.valid_code(code):
 		return "房间码须为 8 位数字"
 	var dir := AppPaths.easytier_dir()
 	var files := Meta.required_files()

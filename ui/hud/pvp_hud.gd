@@ -7,11 +7,10 @@ signal leave_requested
 
 const STATUS_BANNER_SCENE := preload("res://ui/hud/status_banner.tscn")
 
-const Mode := MatchFrame.Mode
 
 const BOARD_W := 720.0                                   # 排行榜面板宽
 const BOARD_TOP := UiDesign.SP_9 + UiDesign.SP_6         # 96:离屏幕上沿
-const BOARD_INSET := 6.0                                 # 内容列相对底板的内缩(像素档)
+const BOARD_INSET := 6.0                                 # 排行榜内容相对底板的内边距。
 const BOARD_ROW_WIDTH := 712                             # 720 - SP_2:行内容宽
 const BOARD_BG_EXTRA := 34.0                             # 底板比内容多出的高度(上下留白)
 const BOARD_DIM_ALPHA := 0.25
@@ -42,7 +41,7 @@ class Round:
 	var subtitle := ""
 	var sections: Array[Section] = []
 
-var mode := Mode.DUEL
+var mode := WorldSpec.DUEL
 var _broadcast := Broadcast.new()
 var _score: Label
 var _grace_label: Label
@@ -67,7 +66,7 @@ var _leaving := false
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	layer = 130
-	var royale := mode == Mode.ROYALE
+	var royale := mode == WorldSpec.ROYALE
 	_build_board()
 	add_child(_broadcast)
 	_broadcast.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -79,8 +78,8 @@ func _ready() -> void:
 	_board_bg.visible = royale
 	_board.visible = royale
 	match mode:
-		Mode.ROYALE: _broadcast.set_broadcast(true, "大乱斗", "等待开局…")
-		Mode.TEAM: _broadcast.set_broadcast(true, "等待玩家加载", "")
+		WorldSpec.ROYALE: _broadcast.set_broadcast(true, "大乱斗", "等待开局…")
+		WorldSpec.TEAM: _broadcast.set_broadcast(true, "等待玩家加载", "")
 		_: _broadcast.set_broadcast(true, "对战开始", "第 1 局")
 
 
@@ -256,7 +255,7 @@ func _update_grace(seconds: float) -> void:
 func show_round(round: Round) -> void:
 	_score.text = round.score
 	_update_grace(round.grace)
-	if mode == Mode.ROYALE:
+	if mode == WorldSpec.ROYALE:
 		_show_board(round.board)
 	_remaining = -1.0
 	if round.remaining >= 0.0:
@@ -274,7 +273,7 @@ func show_round(round: Round) -> void:
 func _show_result(round: Round) -> void:
 	_result_title.text = round.title
 	_result_subtitle.text = round.subtitle
-	_result_subtitle.visible = mode != Mode.ROYALE
+	_result_subtitle.visible = mode != WorldSpec.ROYALE
 	for section in round.sections:
 		var box := VBoxContainer.new()
 		box.add_theme_constant_override("separation", UiDesign.SP_3)
@@ -293,11 +292,7 @@ func _show_result(round: Round) -> void:
 
 # 结算标题的队伍颜色来自 RoundProjection。
 static func _section_strip(section: Section) -> PanelContainer:
-	var strip := UiDesign.header_strip(section.title, UiDesign.T_H2, true)
-	var title := strip.get_child(0) as Label
-	if title != null:
-		title.add_theme_color_override("font_color", section.color)
-	return strip
+	return UiDesign.header_strip(section.title, UiDesign.T_H2, true, section.color)
 
 
 static func _add_result_row(grid: GridContainer, values: Array, color: Color) -> void:

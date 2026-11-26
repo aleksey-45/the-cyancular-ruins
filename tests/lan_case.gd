@@ -1,7 +1,18 @@
 extends "res://tests/case.gd"
 
 
+class RequestRecorder extends "res://core/net/net_session.gd":
+	var endpoints: Array = []
+
+	func _room_request(_kind: int, _data: Dictionary, port: int, _timeout_ms := 8000, host := "127.0.0.1") -> RoomReply:
+		endpoints.append([host, port])
+		return RoomReply.new(OK)
+
+	func _exit_tree() -> void:
+		pass
+
 func run(_tree: SceneTree) -> void:
+	await _rejoin_endpoint()
 	var room := {"code": "00048213", "mode": "team", "players": 3, "max": 10,
 			"in_match": false, "beta": false, "port": 51234}
 	var packet := LanDiscovery.encode_room(room)
@@ -41,25 +52,44 @@ func run(_tree: SceneTree) -> void:
 	var now := 100.0
 	expect(discovery.update(room, "192.168.1.10", now), "first update registers a room")
 	expect(not discovery.update(room, "192.168.1.10", now + 0.5), "unchanged refresh is not a change")
-	expect(discovery.rooms(now + 1.0).size() == 1, "room is listed while fresh")
+	expect(discovery.rooms().size() == 1, "room is listed while fresh")
 	var changed := room.duplicate(true)
 	changed["players"] = 4
 	expect(discovery.update(changed, "192.168.1.10", now + 1.0), "roster change is reported")
-	expect(discovery.rooms(now + 1.0)[0]["players"] == 4, "roster change replaces the old card")
+	expect(discovery.rooms()[0]["players"] == 4, "roster change replaces the old card")
 	expect(discovery.expire(now + 1.0 + LanDiscovery.TTL + 0.1), "stale room expires")
-	expect(discovery.rooms(now + 1.0 + LanDiscovery.TTL + 0.1).is_empty(),
+	expect(discovery.rooms().is_empty(),
 			"expired room is not listed")
 
 	# 绑定固定端口可能与并行测试冲突，这里验证未监听时的返回值。
 	var idle := LanDiscovery.new()
 	expect(not idle.poll(0.0), "poll without listening reports no change")
 	idle.stop()
-	expect(idle.rooms(0.0).is_empty(), "stop without listening is harmless")
+	expect(idle.rooms().is_empty(), "stop without listening is harmless")
 
 	var copies := LanDiscovery.new()
 	copies.update(room, "10.0.0.2", 5.0)
-	var listed := copies.rooms(5.5)
+	var listed := copies.rooms()
 	listed[0]["ip"] = "1.2.3.4"
-	expect(str(copies.rooms(5.5)[0]["ip"]) == "10.0.0.2", "listed rooms are copies")
+	expect(str(copies.rooms()[0]["ip"]) == "10.0.0.2", "listed rooms are copies")
 	copies.clear()
-	expect(copies.rooms(5.5).is_empty(), "clear drops registered rooms")
+	expect(copies.rooms().is_empty(), "clear drops registered rooms")
+
+func _rejoin_endpoint() -> void:
+	var requests := RequestRecorder.new()
+	var room := PvpSession.room
+	var ip := NetBus.server_ip
+	var port := NetBus.server_port
+	var target := ["192.0.2.42", 51234]
+	await requests.join_room("00048213", {"ip": target[0], "port": target[1]})
+	NetBus.server_ip = target[0]
+	NetBus.server_port = target[1]
+	requests._on_event(1, NetEvent.Kind.ROOM, {"code": "00048213", "token": "01".repeat(16), "in_match": true})
+	NetBus.server_ip = "127.0.0.1"
+	NetBus.server_port = port
+	await requests.rejoin_room()
+	await requests.rejoin_room(true)
+	expect(requests.endpoints == [target, target, target], "JOIN and both rejoin paths use the admitted LAN endpoint")
+	NetBus.server_ip = ip
+	PvpSession.room = room
+	requests.free()

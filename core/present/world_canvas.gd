@@ -5,9 +5,9 @@ const FONT := PixelFont.FONT
 const WHITE_MASK := preload("res://core/present/white_mask.gdshader")
 const PLAYER_CONFIG: PlayerConfig = preload("res://core/config/player_config.tres")
 const EYE_LIGHT := preload("res://assets/textures/player_light_cookie.png")
-const MAX_POINT_LIGHTS_PER_ITEM := 15  # Godot Mobile 的单 CanvasItem 点光上限。
+const MAX_POINT_LIGHTS_PER_ITEM := 15  # Mobile 渲染器中一个 CanvasItem 可接收的点光源数量上限。
 enum Pass { NORMAL, PLAYER_BODY, GLOW, MASK, FOREGROUND }
-enum Mark { BOX, CIRCLE, ARC, POLYGON, LINE }
+enum Mark { BOX, CIRCLE, POLYGON, LINE }
 enum Display { DAYLIGHT, EYES, BATCHES, FOREGROUND, LINES, MARKS, OVERLAY, LABELS }
 
 class SpriteBatch extends Node2D:
@@ -30,7 +30,7 @@ var _lines: Array[Array] = []
 var _overlay_marks: Array[Array] = []
 var _labels := [[], []]
 var _foreground := SpriteBatch.new()
-var _overlay := Node2D.new()
+var overlay_layer := Node2D.new()
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -43,7 +43,7 @@ func _ready() -> void:
 	var sky_layer := CanvasLayer.new()
 	sky_layer.layer = -1
 	add_child(sky_layer)
-	# 镜头预留的上下边距延用天顶和地平线颜色。
+	# 视口为畸变预留的上下区域沿用天空渐变两端的颜色。
 	_sky.overscan_y = maxf(1.0, get_viewport_rect().size.y / get_window().get_visible_rect().size.y)
 	UiDesign.cover(sky_layer, _sky)
 	add_child(_ambient)
@@ -53,8 +53,8 @@ func _ready() -> void:
 	var cues := CanvasLayer.new()
 	cues.follow_viewport_enabled = true
 	add_child(cues)
-	cues.add_child(_overlay)
-	_overlay.draw.connect(_draw_overlay)
+	cues.add_child(overlay_layer)
+	overlay_layer.draw.connect(_draw_overlay)
 
 func set_daylight(minute: float) -> void:
 	_day_minute = minute
@@ -71,7 +71,7 @@ static func _shader_material(shader: Shader) -> ShaderMaterial:
 	result.shader = shader
 	return result
 
-## 只合批相邻的同材质贴图，保留角色、武器与特效的遮挡顺序。
+## 相邻且使用同一材质的精灵可共用画布节点，保持原有遮挡顺序。
 func _batch(style: int, separate: bool) -> SpriteBatch:
 	if not separate and _batch_count > 0 and _batches[_batch_count - 1].style == style:
 		return _batches[_batch_count - 1]
@@ -106,7 +106,7 @@ func submit() -> void:
 	for batch in _batches:
 		batch.queue_redraw()
 	_foreground.queue_redraw()
-	_overlay.queue_redraw()
+	overlay_layer.queue_redraw()
 
 func sprite(texture: Texture2D, region: Rect2, pose: Transform2D, color := Color.WHITE,
 		sprite_pass := Pass.NORMAL) -> void:
@@ -142,17 +142,11 @@ func circle(at: Vector2, radius: float, color: Color, overlay := false) -> void:
 	var rows := _overlay_marks if overlay else _marks
 	rows.append([Mark.CIRCLE, at, radius, color])
 
-func arc(at: Vector2, radius: float, start: float, end: float, color: Color, width: float) -> void:
-	_overlay_marks.append([Mark.ARC, at, radius, start, end, color, width])
-
 func polygon(points: PackedVector2Array, color: Color) -> void:
 	_marks.append([Mark.POLYGON, points, color])
 
 func text_at(value: String, at: Vector2, color: Color, plate := false, outline := 0) -> void:
 	_labels[int(not plate)].append([value, at, color, plate, outline])
-
-static func centered_baseline() -> float:
-	return (FONT.get_ascent(32) - FONT.get_descent(32)) * 0.5
 
 func display_state(texture_index: Callable) -> Array:
 	var eyes: Array[Transform2D] = []
@@ -203,8 +197,8 @@ func _draw() -> void:
 		draw_polyline(row[0], row[1], row[2], true)
 
 func _draw_overlay() -> void:
-	_draw_marks(_overlay, _overlay_marks)
-	_draw_labels(_overlay, _labels[1])
+	_draw_marks(overlay_layer, _overlay_marks)
+	_draw_labels(overlay_layer, _labels[1])
 
 func _draw_foreground() -> void:
 	_draw_marks(_foreground, _marks)
@@ -223,7 +217,6 @@ func _draw_marks(target: CanvasItem, rows: Array) -> void:
 		match row[0]:
 			Mark.BOX: target.draw_rect(row[1], row[2], row[3] < 0.0, row[3])
 			Mark.CIRCLE: target.draw_circle(row[1], row[2], row[3], true, -1.0, true)
-			Mark.ARC: target.draw_arc(row[1], row[2], row[3], row[4], 48, row[5], row[6], true)
 			Mark.POLYGON: target.draw_colored_polygon(row[1], row[2])
 			Mark.LINE: target.draw_polyline(row[1], row[2], row[3], true)
 

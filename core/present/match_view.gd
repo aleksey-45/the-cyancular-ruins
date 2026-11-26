@@ -24,7 +24,7 @@ var _world: WorldView
 var _radar: Minimap
 var _symbol: Label
 var _time_of_day: Label
-var _mode: MatchFrame.Mode
+var _mode: String
 var _presented_at := -1.0
 var _intro: RunIntro
 var _intro_time := -1.0
@@ -34,13 +34,13 @@ var _water_state := Vector2.ZERO
 var _intro_walls := PackedByteArray()
 
 func mount(world: WorldView, map: Dictionary,
-		mode: MatchFrame.Mode, clock: MatchFrame.Clock, radar: bool) -> void:
+		mode: String, clock: MatchFrame.Clock, radar: bool) -> void:
 	_mode = mode
 	_world = world
 	_mount_battlefield(map)
 	_world.bind(_canvas, Vector2(map.size * CyrmMap.CELL_SIZE))
-	pause.mount(mode != MatchFrame.Mode.SOLO)
-	if mode == MatchFrame.Mode.SOLO:
+	pause.mount(mode != WorldSpec.SOLO)
+	if mode == WorldSpec.SOLO:
 		_time_of_day = UiDesign.label("", 40)
 		_time_of_day.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_time_of_day.add_theme_constant_override("outline_size", 6)
@@ -166,7 +166,7 @@ func present(delta: float, frame: MatchFrame) -> void:
 	terrain_view.patch(frame.wall_changes)
 	terrain_view.present(frame.now, coverage)
 	var grain_target := Vector2.ZERO
-	if _mode == MatchFrame.Mode.SOLO:
+	if _mode == WorldSpec.SOLO:
 		_time_of_day.text = Daylight.time_text(frame.day_minute)
 		var clock := frame.clock
 		Sfx.pitch_mult = clampf(1.0 + TCFG.LOAN_PITCH_RANGE * clock.loan_depth
@@ -218,7 +218,7 @@ func _mount_watch(clock: MatchFrame.Clock) -> void:
 	watch = WatchHud.new(clock)
 	watch.position = Vector2(24, 124)
 	_hud.add_child(watch)
-	var solo := _mode == MatchFrame.Mode.SOLO
+	var solo := _mode == WorldSpec.SOLO
 	_symbol = UiDesign.label("◁ ◁", UiDesign.T_H2 * 2 if solo else UiDesign.T_H1,
 			TIME_REWIND if solo else UiDesign.C_TEXT)
 	_symbol.set_anchors_preset(Control.PRESET_CENTER if solo else Control.PRESET_CENTER_TOP)
@@ -234,7 +234,7 @@ func _mount_watch(clock: MatchFrame.Clock) -> void:
 	_symbol.hide()
 
 func _present_clock(clock: MatchFrame.Clock, now: float, delta: float) -> float:
-	var solo := _mode == MatchFrame.Mode.SOLO
+	var solo := _mode == WorldSpec.SOLO
 	var coverage := _screen.advance_time(delta, clock.rewind, clock.haste, clock.loan_depth, solo)
 	watch.present(clock, delta)
 	_symbol.visible = clock.rewind or (solo and clock.haste)
@@ -249,5 +249,5 @@ func _present_clock(clock: MatchFrame.Clock, now: float, delta: float) -> float:
 
 func _exit_tree() -> void:
 	end_intro_capture()
-	if _world != null and _mode == MatchFrame.Mode.SOLO:
+	if _world != null and _mode == WorldSpec.SOLO:
 		Sfx.pitch_mult = 1.0

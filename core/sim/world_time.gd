@@ -1,20 +1,28 @@
 class_name WorldTime
-extends RefCounted
+extends MatchTime
 
 const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
 
 enum Mode { NONE, REWIND, HASTE }
 
 var mode := Mode.NONE
-var account: GrainAccount
-var elapsed := 0.0  # 玩家经历的秒数，随世界快照回溯。
+var account := GrainAccount.new()
+var _role: int
+var elapsed := 0.0  # 关卡时钟（秒），随世界回溯恢复。
 var history := TimeHistory.new(TCFG.SNAP_SECONDS)
 var _elite_hits := {}
 var _tick := 0
 var _grain_due: Dictionary[int, int] = {}
 
-func _init(grains: GrainAccount) -> void:
-	account = grains
+func _init(controlling_role: int) -> void:
+	_role = controlling_role
+
+func account_for(_seat: int) -> GrainAccount:
+	return account
+
+func reset_history(_seat: int) -> void:
+	mode = Mode.NONE
+	history = TimeHistory.new(TCFG.SNAP_SECONDS)
 
 func schedule_grain(amount: int) -> void:
 	var due := _tick + TCFG.ELITE_GRAIN_DELAY_TICKS
@@ -26,7 +34,9 @@ func step_rewards() -> void:
 		account.deposit(_grain_due[_tick])
 		_grain_due.erase(_tick)
 
-func advance(combat: CombatSimulator, player: Player, held: int, at: int) -> void:
+func advance(combat: CombatSimulator, inputs: Dictionary, at: int) -> void:
+	var player := combat.players[_role]
+	var held: int = inputs[_role][ActorInput.HELD]
 	var delta := ActorStep.DT
 	step_rewards()
 	account.regen(delta)
@@ -72,11 +82,12 @@ func rewind(combat: CombatSimulator, player: Player, delta := ActorStep.DT) -> v
 	for slot: int in environment["enemies"]:
 		combat.enemies[slot].restore_state(environment["enemies"][slot])
 
-func capture() -> Array:
-	return [mode, elapsed, _tick, _grain_due.duplicate(), account.capture_state(),
-			history.capture(), _elite_hits.duplicate(true)]
+func capture() -> Dictionary:
+	return {"world_time": [mode, elapsed, _tick, _grain_due.duplicate(), account.capture_state(),
+			history.capture(), _elite_hits.duplicate(true)]}
 
-func restore(row: Array) -> void:
+func restore(state: Dictionary) -> void:
+	var row: Array = state["world_time"]
 	mode = row[0]
 	elapsed = row[1]
 	_tick = row[2]
@@ -87,9 +98,6 @@ func restore(row: Array) -> void:
 
 func is_rewinding() -> bool:
 	return mode == Mode.REWIND
-
-func is_hasting() -> bool:
-	return mode == Mode.HASTE
 
 func enemy_delta(delta: float, elite: bool) -> float:
 	if mode == Mode.REWIND:

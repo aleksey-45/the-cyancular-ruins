@@ -24,7 +24,7 @@ func setup(p_session: MapEditSession, p_brush: MapBrush, p_canvas: MapEditCanvas
 	changed.connect(on_changed)
 
 func _build(clipboard: Array) -> void:
-	var width := _spin(self, "笔宽（子格）", 1, 60, brush.width)
+	var width := UiKit.spin_row(self, "笔宽（子格）", 1, 60, brush.width, 20)
 	param_rows.width = width.get_parent()
 	width.value_changed.connect(func(value: float) -> void:
 		brush.width = int(value)
@@ -42,7 +42,7 @@ func _build(clipboard: Array) -> void:
 	param_rows.material = material
 	var fields := UiDesign.box(material, 4, true)
 	for i in 4:
-		var spin := _spin(fields, ["色相", "亮度", "饱和度", "透明度"][i], 0, 7, brush.tint[i])
+		var spin := UiKit.spin_row(fields, ["色相", "亮度", "饱和度", "透明度"][i], 0, 7, brush.tint[i], 20)
 		spin.value_changed.connect(func(value: float) -> void:
 			brush.tint[i] = int(value)
 			changed.emit())
@@ -112,21 +112,6 @@ func set_ink(color: Color) -> void:
 func set_tints(values: Vector4i) -> void:
 	for i in tints.size():
 		tints[i].set_value_no_signal(values[i])
-
-func _spin(parent: Control, text: String, minimum: int, maximum: int, value: int) -> SpinBox:
-	var row := HBoxContainer.new()
-	parent.add_child(row)
-	var label := Label.new()
-	label.text = text
-	label.add_theme_font_size_override("font_size", 20)
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(label)
-	var spin := SpinBox.new()
-	spin.min_value = minimum
-	spin.max_value = maximum
-	spin.value = value
-	row.add_child(spin)
-	return spin
 
 func _check(parent: Control, text: String, action: Callable) -> CheckBox:
 	var check := CheckBox.new()

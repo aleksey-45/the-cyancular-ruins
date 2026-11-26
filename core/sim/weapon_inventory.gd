@@ -2,16 +2,14 @@ class_name WeaponInventory
 extends RefCounted
 
 const TIER_LIGHT := 0
-const TIER_MEDIUM := 1
-const TIER_HEAVY := 2
 const CELL_COST := [2, 3, 4]
 const DEFAULT_CARRIED := -1
 
 # 每把武器在背包里有自己的实例和弹药数量。手持武器使用同一条记录，快照按顺序传递所有记录。
 enum { TYPE, INST, CARRIED, STRIDE }
 
-var capacity := 8
-var max_weapons := 4
+const CAPACITY := 8
+const MAX_WEAPONS := 4
 var enabled_types: Array = WeaponRegistry.enabled_ids()
 var equipped: GunBody
 var _slots: Array[PackedInt32Array] = []
@@ -40,12 +38,12 @@ func cycle_instance(dir: int) -> int:
 	var next := posmod(maxi(current, 0) + dir, items.size())
 	return items[next][INST] if next != current else 0
 
-func equip_inst(inst: int) -> void:
-	if inst <= 0 or inst == current_inst():
-		return
+func equip_inst(inst: int) -> bool:
+	if inst == current_inst(): return inst > 0
 	var item := _find(inst)
-	if not item.is_empty():
-		_equip(item)
+	if item.is_empty(): return false
+	_equip(item)
+	return true
 
 func _equip(item: PackedInt32Array) -> void:
 	var cooldown := equipped.fire_cd_timer if equipped != null else 0.0
@@ -76,9 +74,9 @@ func _add(type_id: int, carried: int) -> PackedInt32Array:
 	for item in _slots:
 		used += _cost(item[TYPE])
 	var item := PackedInt32Array([type_id, _next_inst, carried])
-	if _slots.size() < max_weapons and used <= capacity:
+	if _slots.size() < MAX_WEAPONS and used <= CAPACITY:
 		_slots.append(item)
-	elif equipped != null and _slots.size() <= max_weapons and used - _cost(equipped.type_id) <= capacity:
+	elif equipped != null and used - _cost(equipped.type_id) <= CAPACITY:
 		_slots[_slots.find(equipped.item)] = item
 	else:
 		return []
@@ -118,12 +116,9 @@ func random_keep_one(rng: RandomNumberGenerator) -> Array[Dictionary]:
 
 # 给 HUD 的数组先记录手持武器在背包中的索引，再记录背包容量。没有手持武器时索引是 -1。
 # 后面每两项描述一把武器，依次为武器类型和占用的格数。
-func cell_layout() -> PackedInt32Array:
-	return layout(snapshot(), current_inst(), capacity)
-
-static func layout(entries: PackedInt32Array, inst: int, capacity := 8) -> PackedInt32Array:
+static func layout(entries: PackedInt32Array, inst: int) -> PackedInt32Array:
 	var active := -1
-	var layout := PackedInt32Array([active, capacity])
+	var layout := PackedInt32Array([active, CAPACITY])
 	for at in range(0, entries.size(), STRIDE):
 		if entries[at + INST] == inst:
 			layout[0] = at / STRIDE
@@ -137,7 +132,15 @@ func snapshot() -> PackedInt32Array:
 		entries.append_array(item)
 	return entries
 
-func restore(inst: int, entries: PackedInt32Array, values: Array, rewind: bool) -> void:
+func capture_into(values: Array) -> void:
+	values[PlayerStateSchema.WEAPON_NEXT] = _next_inst
+	values[PlayerStateSchema.WEAPON_INST] = current_inst()
+	values[PlayerStateSchema.INVENTORY] = snapshot()
+	values[PlayerStateSchema.EQUIPMENT] = equipped.state_values() if equipped != null else []
+
+func restore(state: Array, rewind: bool) -> void:
+	var inst: int = state[PlayerStateSchema.WEAPON_INST]
+	var entries: PackedInt32Array = state[PlayerStateSchema.INVENTORY]
 	if rewind:
 		# 按实例 ID 将历史弹药量恢复到当前仍持有的武器。
 		for at in range(0, entries.size(), STRIDE):
@@ -145,6 +148,7 @@ func restore(inst: int, entries: PackedInt32Array, values: Array, rewind: bool) 
 			if not owned.is_empty():
 				owned[CARRIED] = entries[at + CARRIED]
 	else:
+		_next_inst = state[PlayerStateSchema.WEAPON_NEXT]
 		_slots.clear()
 		for at in range(0, entries.size(), STRIDE):
 			_slots.append(entries.slice(at, at + STRIDE))
@@ -154,7 +158,7 @@ func restore(inst: int, entries: PackedInt32Array, values: Array, rewind: bool) 
 			equipped.item = selected
 		else:
 			equipped = GunBody.new(selected)
-		equipped.restore_state_values(values)
+		equipped.restore_state_values(state[PlayerStateSchema.EQUIPMENT])
 	elif not rewind:
 		equipped = null
 	if rewind and equipped != null:

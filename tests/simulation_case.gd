@@ -12,6 +12,7 @@ func run(tree: SceneTree) -> void:
 	_blast(tree)
 	_shared_combat_tick(tree)
 	_pickup_order(tree)
+	_drop_and_attack(tree)
 	_pickup_landing(tree)
 
 func _equipment(tree: SceneTree) -> void:
@@ -38,18 +39,18 @@ func _equipment(tree: SceneTree) -> void:
 		var before := actor.capture_state()
 		var record := _attack(attack, attack)
 		if spec["trigger"] in [WeaponDef.Trigger.RELEASE, WeaponDef.Trigger.CHARGE_RELEASE]:
-			expect(_fires(ActorStep.step(actor, record)).is_empty() and (actor.equipped as GunBody).aiming,
+			expect(_fires(step_actions(actor, record)).is_empty() and (actor.equipped as GunBody).aiming,
 					"release weapon %d aims on press" % type_id)
 			record = _attack(0, 0, attack)
 			before = actor.capture_state()
 		elif spec["trigger_delay"] > 0.0:
 			var quiet := true
 			for tick in roundi(spec["trigger_delay"] / ActorStep.DT) - 1:
-				quiet = _fires(ActorStep.step(actor, record)).is_empty() and quiet
+				quiet = _fires(step_actions(actor, record)).is_empty() and quiet
 				record = _attack(attack, 0)
 			expect(quiet, "delayed automatic weapon waits for its trigger time")
 			before = actor.capture_state()
-		var actions := ActorStep.step(actor, record)
+		var actions := step_actions(actor, record)
 		var after := actor.capture_state()
 		var spent := int(spec.has("mag"))
 		expect(_fires(actions).size() == 1 and after[INV][WeaponInventory.CARRIED] == before[INV][WeaponInventory.CARRIED] - spent,
@@ -57,7 +58,7 @@ func _equipment(tree: SceneTree) -> void:
 		_draw_actor(display, actor)
 		expect(actor.capture_state() == after, "presentation leaves rule %d unchanged" % type_id)
 		actor.restore_state(before)
-		expect(ActorStep.step(actor, record) == actions and actor.capture_state() == after,
+		expect(step_actions(actor, record) == actions and actor.capture_state() == after,
 				"restored rule %d reproduces both state and muzzle action" % type_id)
 		submit(actor, actions)
 		var count := int(spec["count"]) if spec["attack"] == WeaponDef.Attack.PROJECTILE else 0
@@ -133,7 +134,7 @@ func _inventory_rewind(tree: SceneTree) -> void:
 	actor._controls_locked = true
 	actor.equipped.fire_cd_timer = ActorStep.DT
 	actor.equipped.fire_buffered = true
-	expect(_fires(ActorStep.step(actor, record)).is_empty()
+	expect(_fires(step_actions(actor, record)).is_empty()
 			and not actor.equipped.fire_buffered, "locked controls clear buffered attacks")
 	actor._controls_locked = false
 	actor.rewinding = true
@@ -143,7 +144,7 @@ func _inventory_rewind(tree: SceneTree) -> void:
 	actor.force_down()
 	ActorStep.step(actor, record)
 	expect(ground.items.is_empty(), "downed actors keep their weapon")
-	actor.apply_authoritative_state(actor.sim_max_hp, actor.max_waterproof, false)
+	actor.heal()
 	ActorStep.step(actor, record)
 	expect(ground.items.size() == 1, "only an active actor can pick up or drop items")
 	cleanup()
@@ -157,9 +158,9 @@ func _compound_bow(tree: SceneTree) -> void:
 	var bow := actor.equipped as GunBody
 	var attack := ActorInput.BIT_ATTACK
 	expect(bow.carried == 1, "a fresh bow carries one arrow")
-	expect(_fires(ActorStep.step(actor, _attack(0, 0, attack))).is_empty(),
+	expect(_fires(step_actions(actor, _attack(0, 0, attack))).is_empty(),
 			"a release on a newly equipped bow does not fire")
-	var tap := _fires(ActorStep.step(actor, _attack(0, attack, attack)))
+	var tap := _fires(step_actions(actor, _attack(0, attack, attack)))
 	expect(tap.size() == 1 and tap[0]["charge"] == 0.0, "a tap shoots at minimum charge")
 	submit(actor, tap)
 	var tap_id := ShotRules.shot_id(actor.role, tap[0]["serial"])
@@ -186,7 +187,7 @@ func _compound_bow(tree: SceneTree) -> void:
 	var nocked: Transform2D = sprite[2]
 	expect(sprite[0] == WorldView.BULLETS and nocked.origin.is_equal_approx(guide[0]),
 			"the drawn arrow is centered at the start of its guide")
-	var release := ActorStep.step(actor, _attack(0, 0, attack))
+	var release := step_actions(actor, _attack(0, 0, attack))
 	submit(actor, release)
 	var arrow: BulletBody = sim.projectiles.values()[0]
 	var id := arrow.entity_id
@@ -200,7 +201,7 @@ func _compound_bow(tree: SceneTree) -> void:
 			and canvas._marks.is_empty(),
 			"the first arrow step stays within spread of the guide without an explosion marker")
 
-	sim.time_field = WorldTime.new(GrainAccount.new())
+	sim.time_field = WorldTime.new(1)
 	_record_time(sim, actor)
 	sim.erase_projectile(id)
 	_record_time(sim, actor)
@@ -225,10 +226,10 @@ func _m249(tree: SceneTree) -> void:
 	var attack := ActorInput.BIT_ATTACK
 	var hold := _attack(attack, 0)
 	var gun := actor.equipped as GunBody
-	expect(gun.carried == 100 and _fires(ActorStep.step(actor, hold, 0.2)).is_empty(),
+	expect(gun.carried == 100 and _fires(step_actions(actor, hold, 0.2)).is_empty(),
 			"M249 starts with 100 rounds and waits while the trigger is held")
 	ActorStep.step(actor, _attack(0, 0, attack))
-	expect(gun.hold_elapsed == 0.0 and _fires(ActorStep.step(actor, hold, 0.2)).is_empty(),
+	expect(gun.hold_elapsed == 0.0 and _fires(step_actions(actor, hold, 0.2)).is_empty(),
 			"releasing the trigger starts a fresh delay")
 	var switch := hold.duplicate()
 	switch[ActorInput.WINST] = actor.weapons.inst_at_index(1)
@@ -238,9 +239,9 @@ func _m249(tree: SceneTree) -> void:
 	gun = actor.equipped as GunBody
 	expect(is_equal_approx(gun.hold_elapsed, ActorStep.DT), "switching equipment clears the previous trigger hold")
 	gun.carried = 1
-	expect(_fires(ActorStep.step(actor, hold, 0.3)).size() == 1 and gun.carried == 0 and gun.reloading,
+	expect(_fires(step_actions(actor, hold, 0.3)).size() == 1 and gun.carried == 0 and gun.reloading,
 			"the last M249 round starts the normal reload")
-	expect(_fires(ActorStep.step(actor, hold)).is_empty(), "a held trigger cannot fire during reload")
+	expect(_fires(step_actions(actor, hold)).is_empty(), "a held trigger cannot fire during reload")
 	gun.reload_left = ActorStep.DT
 	ActorStep.step(actor, NEUTRAL_INPUT)
 	expect(not gun.reloading and gun.carried == 100, "M249 reload fills its magazine")
@@ -253,14 +254,14 @@ func _rounds(tree: SceneTree) -> void:
 	var bullet := sim.spawn_projectile(1, WeaponType.PISTOL, actor,
 			Vector2(136, 160), Vector2.DOWN * 900.0)
 	var hit_sub := Vector2i(8, 12)
-	var before := _terrain.get_hp(hit_sub)
+	var before := parent.terrain.get_hp(hit_sub)
 	for i in 4:
 		sim.step_projectiles(ActorStep.DT)
 		if sim.projectiles.is_empty(): break
 	expect(sim.projectiles.is_empty(), "an ordinary round ends on terrain contact")
-	expect(_terrain.get_hp(hit_sub) == before - bullet.hit_damage
-			and _terrain.get_hp(hit_sub + Vector2i.ONE) == before - bullet.hit_damage
-			and _terrain.get_hp(hit_sub + Vector2i(2, 0)) == before,
+	expect(parent.terrain.get_hp(hit_sub) == before - bullet.hit_damage
+			and parent.terrain.get_hp(hit_sub + Vector2i.ONE) == before - bullet.hit_damage
+			and parent.terrain.get_hp(hit_sub + Vector2i(2, 0)) == before,
 			"a swept projectile immediately damages only the 32 px block at the contact point")
 	cleanup()
 	var walls := {}
@@ -289,7 +290,7 @@ func _rounds(tree: SceneTree) -> void:
 	sim.step_projectiles(ActorStep.DT)
 	expect(victim.sim_hp == hp - bullet.hit_damage and ally.sim_hp == ally.sim_max_hp and sim.projectiles.is_empty(),
 			"without body blocking, a fast round still crosses the seam and passes through an ally to hit an opponent")
-	expect(bullet.position.x >= 0.0 and bullet.position.x < _terrain.map_size.x,
+	expect(bullet.position.x >= 0.0 and bullet.position.x < parent.terrain.map_size.x,
 			"the swept impact also returns to canonical coordinates")
 	victim.force_down()
 	victim.sync_collision_geometry()
@@ -338,11 +339,11 @@ func _grenade(tree: SceneTree) -> void:
 	shooter.weapons.equip_inst(grenade)
 	var before := shooter.equipped.carried
 	var release := _attack(0, 0, ActorInput.BIT_ATTACK)
-	expect(_fires(ActorStep.step(shooter, release)).is_empty() and shooter.equipped.carried == before
+	expect(_fires(step_actions(shooter, release)).is_empty() and shooter.equipped.carried == before
 			and shooter.equipped.fire_cd_timer == 0.0,
 			"the cap counts live grenades across equipment switches without spending ammo or cooldown")
 	sim.erase_projectile(2)
-	expect(_fires(ActorStep.step(shooter, release)).size() == 1,
+	expect(_fires(step_actions(shooter, release)).size() == 1,
 			"removing a live grenade opens a slot for the next launch")
 	var ranged := sim.projectiles[3]
 	ranged.max_range = 0.0
@@ -363,21 +364,21 @@ func _beam(tree: SceneTree) -> void:
 	_place(ally, Vector2(340, 544), 1)
 	shooter.weapons.set_initial_inventory([WeaponType.LASER])
 	var attack := ActorInput.BIT_ATTACK
-	var shots := ActorStep.step(shooter, _attack(attack, attack))
+	var shots := step_actions(shooter, _attack(attack, attack))
 	var before := near.sim_hp
 	var cell := Vector2i(14, 8)
-	_terrain.damage_beam(cell * 4, _terrain.get_hp(cell * 4) - 1)
+	parent.terrain.damage_beam(cell * 4, parent.terrain.get_hp(cell * 4) - 1)
 	var sim := parent.combat
-	sim.time_field = WorldTime.new(GrainAccount.new())
-	_terrain.commit()
+	sim.time_field = WorldTime.new(1)
+	parent.terrain.commit()
 	_record_time(sim, shooter)
-	var fired := sim.resolve_requests([shooter.role])
-	var beams: Array = [fired.values()[0]["vectors"]]
+	sim.resolve_requests([shooter.role])
+	var beams: Array = [sim.beams.values()[0][CombatSimulator.Beam.POINTS]]
 	var damage: int = WeaponRegistry.definition(WeaponType.LASER)["damage"]
 	expect(near.sim_hp == before - damage and far.sim_hp == before - damage,
 			"the authoritative beam hits multiple targets, each once across reflections")
 	expect(ally.sim_hp == before and shooter.sim_hp == before, "the beam skips its shooter and allies")
-	expect(_terrain.material_at(cell * 4) == 0, "the first beam destroys the wall in terrain data immediately")
+	expect(parent.terrain.material_at(cell * 4) == 0, "the first beam destroys the wall in terrain data immediately")
 	ActorStep.step(ally, NEUTRAL_INPUT)
 	var bullet := sim.spawn_projectile(1, WeaponType.PISTOL, shooter,
 			Vector2(872, 544), Vector2.RIGHT * 3000.0)
@@ -385,12 +386,14 @@ func _beam(tree: SceneTree) -> void:
 	expect(sim.projectiles.is_empty(), "a projectile still collides with the broken wall in the same tick")
 	var next: Dictionary = shots[0].duplicate()
 	next["serial"] += 1
-	beams.append(sim.fire(shooter, next)["vectors"])
+	sim.fire(shooter, next)
+	beams.append(sim.beams[ShotRules.shot_id(shooter.role, next["serial"])][CombatSimulator.Beam.POINTS])
 	expect(beams.size() == 2 and beams[0].size() >= 3 and beams[0] == beams[1],
 			"actor and projectile steps do not rebuild terrain collision between beams")
-	_terrain.commit()
+	parent.terrain.commit()
 	next["serial"] += 1
-	beams.append(sim.fire(shooter, next)["vectors"])
+	sim.fire(shooter, next)
+	beams.append(sim.beams[ShotRules.shot_id(shooter.role, next["serial"])][CombatSimulator.Beam.POINTS])
 	expect(beams.back().size() == 2, "the tick-end collision refresh removes the wall for the following beam")
 	var laser := WeaponRegistry.definition(WeaponType.LASER)
 	WeaponRegistry._definitions[WeaponType.LASER] = laser.merged({"min_damage": 2})
@@ -400,7 +403,7 @@ func _beam(tree: SceneTree) -> void:
 	sim.fire(shooter, next)
 	WeaponRegistry._definitions[WeaponType.LASER] = laser
 	expect(near.sim_hp == before - 3, "a charged beam uses its interpolated damage")
-	_terrain.commit()
+	parent.terrain.commit()
 	var lit := sim.beams.duplicate()
 	_record_time(sim, shooter)
 	for i in CombatSimulator.BEAM_TICKS:
@@ -435,7 +438,7 @@ func _melee(tree: SceneTree) -> void:
 	shooter.weapons.set_initial_inventory([TYPE_ID])
 	var sim := parent.combat
 	var attack := ActorInput.BIT_ATTACK
-	var shots := ActorStep.step(shooter, _attack(attack, attack | ActorInput.BIT_RELOAD))
+	var shots := step_actions(shooter, _attack(attack, attack | ActorInput.BIT_RELOAD))
 	submit(shooter, shots)
 	expect(_fires(shots).size() == 1 and not shooter.equipped.reloading and not shooter.equipped.has_magazine()
 			and shooter.equipped.carried == WeaponInventory.DEFAULT_CARRIED and sim.projectiles.is_empty(),
@@ -460,8 +463,8 @@ func _combat_phase(tree: SceneTree, melee_type: int) -> void:
 		shooter.weapons.set_initial_inventory([type_id])
 		var shot := _attack(ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK)
 		var sim := parent.combat
-		var fired := sim.step({shooter.role: shot, target.role: NEUTRAL_INPUT})
-		expect(fired.size() == 1 and fired.values()[0]["type_id"] == type_id,
+		sim.step({shooter.role: shot, target.role: NEUTRAL_INPUT})
+		expect(shooter.shot_serial == 1 and shooter.last_shot_type == type_id,
 				"attack %d resolves one shot in the shared step" % type_id)
 		expect(is_equal_approx(target.position.x, 345.0) and sim.hits.size() == 1,
 				"attack type %d hits after the later role completes its movement" % type_id)
@@ -479,7 +482,7 @@ func _blast(tree: SceneTree) -> void:
 	var enemy := sim.add_enemy("jump_bird", near, Vector2(936, 530))
 	var enemy_hp := enemy.hp
 	var cell := Vector2i(15, 8)
-	var wall := block_hp(_terrain, cell)
+	var wall := block_hp(parent.terrain, cell)
 	var hp := near.sim_hp
 	near.sim_iframes = 1.0
 	sim.tick = 100
@@ -487,13 +490,13 @@ func _blast(tree: SceneTree) -> void:
 	for at in [100, 101, 102]:
 		sim.tick = at
 		sim.settle_blasts()
-		expect(near.sim_hp == hp and enemy.hp == enemy_hp and block_hp(_terrain, cell) == wall,
+		expect(near.sim_hp == hp and enemy.hp == enemy_hp and block_hp(parent.terrain, cell) == wall,
 				"actors and terrain wait until three ticks after detonation")
 	sim.tick = 103
 	sim.settle_blasts()
 	expect(near.sim_hp < hp and across.sim_hp < hp and far.sim_hp == hp and enemy.hp < enemy_hp,
 			"one blast reaches players and enemies across the seam and respects its radius")
-	expect(block_hp(_terrain, cell) != wall, "blast damage reaches terrain on the same tick")
+	expect(block_hp(parent.terrain, cell) != wall, "blast damage reaches terrain on the same tick")
 	var after := near.sim_hp
 	sim.settle_blasts()
 	expect(near.sim_hp == after and sim.pending_blasts.is_empty(), "each blast settles once")
@@ -508,7 +511,7 @@ func _shared_combat_tick(tree: SceneTree) -> void:
 		_place(actor, Vector2(260, 135))
 		actor.weapons.set_initial_inventory([WeaponType.GRENADE])
 	var single := local.combat
-	single.time_field = WorldTime.new(GrainAccount.new())
+	single.time_field = WorldTime.new(1)
 	var server := host.combat
 	var id := ShotRules.shot_id(1, 1)
 	var due := 0
@@ -521,7 +524,7 @@ func _shared_combat_tick(tree: SceneTree) -> void:
 	for at in range(1, 46):
 		var release := ActorInput.BIT_ATTACK if at == 1 else 0
 		var record := {1: [0.0, held, 0, release, 0, direction]}
-		single.time_field.advance(single, solo_player, held, at)
+		single.time_field.advance(single, {solo_player.role: _attack(held, 0)}, at)
 		single.hits.clear()
 		single.step(record)
 		server.step(record)
@@ -547,8 +550,8 @@ func _pickup_order(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
 	actor.position = Vector2(0, 64)
-	var ground := GroundWeaponField.new(_terrain)
-	var one := ground.spawn( WeaponType.PISTOL, 1, Vector2(_terrain.map_size.x - 24, 64), Vector2.ZERO)
+	var ground := GroundWeaponField.new(parent.terrain)
+	var one := ground.spawn( WeaponType.PISTOL, 1, Vector2(parent.terrain.map_size.x - 24, 64), Vector2.ZERO)
 	var two := ground.spawn( WeaponType.PISTOL, 2, Vector2(24, 64), Vector2.ZERO)
 	ground.items.erase(one.inst)
 	ground.items[one.inst] = one
@@ -568,7 +571,7 @@ func _pickup_landing(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var floor_y := 12.0 * CyrmMap.CELL_SIZE
 	var before := parent.get_child_count()
-	var field := GroundWeaponField.new(_terrain)
+	var field := GroundWeaponField.new(parent.terrain)
 	for preplaced in [true, false]:
 		var at := Vector2(160.0 if preplaced else 352.0, floor_y - CyrmMap.CELL_SIZE * 0.5)
 		var bow := field.spawn( WeaponType.COMPOUND_BOW, WeaponInventory.DEFAULT_CARRIED, at, Vector2.ZERO)
@@ -582,3 +585,14 @@ func _pickup_landing(tree: SceneTree) -> void:
 	expect(parent.get_child_count() == before, "ground weapons simulate without adding scene nodes")
 	field.clear()
 	cleanup()
+
+func _drop_and_attack(tree: SceneTree) -> void:
+	var arena := world(tree)
+	var actor := player(arena)
+	actor.weapons.set_initial_inventory([WeaponType.PISTOL, WeaponType.RIFLE])
+	var previous := actor.weapons.current_inst()
+	var input := _attack(ActorInput.BIT_ATTACK, ActorInput.BIT_DROP | ActorInput.BIT_ATTACK)
+	input[ActorInput.WINST] = previous
+	arena.combat.step({actor.role: input})
+	expect(actor.weapons.current_inst() != previous and actor.equipped != null and actor.shot_serial == 0,
+			"dropping and firing the same instance in one tick cannot fire the replacement weapon")

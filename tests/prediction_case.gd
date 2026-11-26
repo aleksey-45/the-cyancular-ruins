@@ -14,19 +14,19 @@ func run(tree: SceneTree) -> void:
 	_position_residual()
 	await _load_match(tree)
 
-func _beta() -> MatchSession:
+func _beta() -> MatchHost:
 	var host := arena(Mode, [1, 2], {}, RoomOptions.normalized(Mode, {"beta": true}))
 	host.world.rules.phase = MatchRules.Phase.PLAYING
 	return host
 
-func _baseline(host: MatchSession, frame: Dictionary = {}) -> Dictionary:
+func _baseline(host: MatchHost, frame: Dictionary = {}) -> Dictionary:
 	var world := host.world
 	return {"code": "12345678", "role": 1, "mode": world.spec.mode, "roles": world.spec.roles,
 		"teams": world.spec.teams, "options": world.spec.options, "seed": world.spec.seed,
 		"names": {1: "A", 2: "B"}, "hues": {1: 0.0, 2: 45.0}, "map": world.spec.map,
 		"sub_hp": world.terrain.get_modified(), "frame": host.packet({}) if frame.is_empty() else frame}
 
-func _predict_step(client: MatchSession, record: Array = Neutral, ping_ms := 0) -> Dictionary:
+func _predict_step(client: PredictedMatch, record: Array = Neutral, ping_ms := 0) -> Dictionary:
 	var update := client.reconcile(ping_ms)
 	update.merge(client.predict(record))
 	return update
@@ -67,7 +67,7 @@ func _checkpoint_continuation() -> void:
 	var wire := encoder.encode_state(PackedByteArray(), NetCodec.StateBatch.new(raw))
 	var frame := NetCodec.new().decode_state(NetCodec.Reader.new(wire, 1))
 	expect(frame == raw, "a logical STATE alone describes every live and scheduled combat entity")
-	var client := MatchSession.open_remote(_baseline(host, frame), 0)
+	var client := PredictedMatch.new(_baseline(host, frame), 0)
 	var replica := client.world
 	var local_checkpoint: Dictionary = frame["checkpoint"].merged({"terrain": replica.terrain.version}, true)
 	expect(replica.capture() == local_checkpoint and replica.terrain.version != frame["checkpoint"]["terrain"]
@@ -79,8 +79,8 @@ func _checkpoint_continuation() -> void:
 	for i in 130:
 		var skill := ActorInput.BIT_REWIND if i < 3 else 0
 		var inputs := {1: [0.0, skill, 0, 0, 0, Vector2.RIGHT], 2: Neutral}
-		host.fixed_step(inputs.duplicate())
-		replica.advance(inputs.duplicate())
+		host.fixed_step(inputs)
+		replica.advance(inputs)
 		var authority := world.capture()
 		var restored := replica.capture()
 		authority.erase("terrain")
@@ -93,13 +93,13 @@ func _checkpoint_continuation() -> void:
 	expect(down_observed and two.life == 2 and not two.sim_downed, "both worlds resolve the scheduled death and respawn")
 	expect(raw["checkpoint"]["projectiles"][id][BulletBody.MOTION_TRAVELED] == 152.75
 			and raw["checkpoint"]["players"][2][Actor.HP] == 1, "advancing leaves retained checkpoint values intact")
-	client.close()
-	host.close()
+	client.world.close()
+	host.world.close()
 
 func _wait_for_terrain(patch_first: bool) -> void:
 	var host := _beta()
 	var world := host.world
-	var client := MatchSession.open_remote(_baseline(host), 0)
+	var client := PredictedMatch.new(_baseline(host), 0)
 	var terrain := client.world.terrain
 	var cell := _wall(world.spec.map)
 	var hp := world.terrain.get_hp(cell)
@@ -144,13 +144,13 @@ func _wait_for_terrain(patch_first: bool) -> void:
 	_predict_step(client)
 	expect(client.latest_authority == next_state and terrain.get_hp(cell) == hp,
 			"the next anchor consumes the later patch that was left queued")
-	client.close()
-	host.close()
+	client.world.close()
+	host.world.close()
 
 func _position_tolerance() -> void:
 	for change in ["subpixel", "position", "health", "local_input", "remote_input", "remote_health", "phase"]:
 		var host := _beta()
-		var client := MatchSession.open_remote(_baseline(host), 0)
+		var client := PredictedMatch.new(_baseline(host), 0)
 		_predict_step(client)
 		host.fixed_step()
 		var packet := host.packet({})
@@ -180,21 +180,21 @@ func _position_tolerance() -> void:
 		if change == "health":
 			expect(client.world.players[1].sim_hp == actor[Actor.HP] and update.has("replacement"),
 					"health correction applies and any resulting position change can be smoothed")
-		client.close()
-		host.close()
+		client.world.close()
+		host.world.close()
 
 func _buffered_input() -> void:
 	var host := _beta()
 	var world := host.world
 	world.players[2].weapons.set_initial_inventory([WeaponType.RIFLE])
-	var client := MatchSession.open_remote(_baseline(host), 100)
+	var client := PredictedMatch.new(_baseline(host), 100)
 	var max_replay := 0
 	var attack := ActorInput.BIT_ATTACK
 	for step in range(1, 22):
 		var pressed := attack if step == 12 else 0
 		var record := [1.0, attack if pressed else 0, pressed, 0, 0, Vector2.RIGHT]
-		_predict_step(client, record, 100)
-		host.accept_input(1, client.outgoing_input, -1)
+		var update := _predict_step(client, record, 100)
+		host.accept_input(1, update["input"], -1)
 		var trigger := [0.0, 0, 0, 0, 0, Vector2.RIGHT]
 		host.accept_input(2, [[[step, 1, step, 1.0, attack, Vector2.RIGHT]], []], -1)
 		host.fixed_step({2: trigger} if step < 4 else {})
@@ -202,22 +202,22 @@ func _buffered_input() -> void:
 			world.players[1].sim_hp -= 1
 		if step % 4 == 0:
 			var anchor := host.packet({})
-			anchor["input_feedback"] = host.feedback(1)
+			anchor["input_feedback"] = host.remote[1].feedback
 			client.receive_state(anchor)
 		max_replay = maxi(max_replay, client.replay_ticks)
 	var confirmed: Array = client.latest_authority["checkpoint"]["players"][2]
-	expect(max_replay > 0 and max_replay <= MatchSession.MAX_REPLAY, "late confirmed state replays the retained local inputs")
+	expect(max_replay > 0 and max_replay <= PredictedMatch.MAX_REPLAY, "late confirmed state replays the retained local inputs")
 	expect(client.world.players[2].shot_serial == confirmed[Actor.SHOT_SERIAL],
 			"remote movement extrapolation does not extrapolate attack")
 	var edge_target := client.last_input_target
 	for i in 80:
 		_predict_step(client, Neutral, 100)
 	var at: int = client.latest_authority["checkpoint"]["tick"]
-	expect(client.world.tick == at + MatchSession.MAX_REPLAY and client.last_input_target > edge_target,
+	expect(client.world.tick == at + PredictedMatch.MAX_REPLAY and client.last_input_target > edge_target,
 			"without authority, prediction stays bounded while input keeps its own clock")
-	expect(client._history.size() == MatchSession.KEEP, "the session retains bounded input records")
-	client.close()
-	host.close()
+	expect(client._history.size() == PredictedMatch.KEEP, "the session retains bounded input records")
+	client.world.close()
+	host.world.close()
 
 func _sample_bow_and_death() -> void:
 	var host := _beta()
@@ -241,13 +241,13 @@ func _sample_bow_and_death() -> void:
 	var presenter := MatchPresenter.new(world.spec, world.terrain, 1, world.personal_time.accounts[1])
 	var details := {"aim": Vector2.RIGHT, "walls": {}, "guide": PackedVector2Array(),
 		"drop": 0.0, "bounds": world.players[1].collision_rect()}
-	var shown := presenter.compose(sampler.sample(0.0, 1.0), 0.0, details)
+	var shown := presenter.compose(sampler.sample(0.0, 1.0), 0.0, details["drop"], details["walls"])
 	expect(not shown.downed and not shown.actors[0].downed and shown.health == world.players[1].sim_hp,
 			"speculative death does not change the local observed health or down pose")
 	expect(shown.actors[1].bow_draw >= 0.0 and shown.projectiles.is_empty(),
 			"before the remote release tick the arrow is still on the bow")
 	sampler.render_tick = float(world.tick)
-	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.01, details)
+	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.01, details["drop"], details["walls"])
 	expect(shown.actors[1].bow_draw < 0.0 and shown.projectiles.size() == 1,
 			"the arrow flies and the bow clears on the same remote sample")
 	world.players[1].apply_hit_health(0)
@@ -255,18 +255,18 @@ func _sample_bow_and_death() -> void:
 	var confirmed := host.packet({})
 	var death := world.sample(1)
 	sampler.accept({"authority": confirmed, "previous": own, "current": death})
-	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.02, details)
+	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.02, details["drop"], details["walls"])
 	expect(shown.downed and shown.actors[0].downed and shown.hit_ratio > 0.0, "confirmation starts the down pose and reaction")
-	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.03, details)
+	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.03, details["drop"], details["walls"])
 	expect(shown.downed and shown.hit_ratio == 0.0, "the same authority state does not repeat a hit reaction")
 	var early_respawn := death.duplicate(true)
 	early_respawn["players"][1][Actor.LIFE] += 1
 	early_respawn["players"][1][Actor.POS] += Vector2(300, 0)
 	sampler.accept({"previous": death, "current": early_respawn})
-	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.04, details)
+	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.04, details["drop"], details["walls"])
 	expect(shown.downed and shown.focus == death["players"][1][Actor.POS],
 			"the previous life stays on screen until authority confirms the respawn")
-	host.close()
+	host.world.close()
 
 func _position_residual() -> void:
 	var host := _beta()
@@ -290,7 +290,7 @@ func _position_residual() -> void:
 	var half: Vector2 = sampler.sample(0.025, 1.0)["focus"]
 	expect(half.is_equal_approx(Vector2(8, 20)), "new movement continues while the display residual decays")
 	expect(sampler.sample(0.05, 1.0)["focus"] == next, "the residual disappears in elapsed render time")
-	host.close()
+	host.world.close()
 
 func _load_match(tree: SceneTree) -> void:
 	var host := _beta()
@@ -309,7 +309,7 @@ func _load_match(tree: SceneTree) -> void:
 	PvpSession.begin_match(payload, payload["map"])
 	expect(NetSession.match_inbox.is_empty(), "a new loading baseline supersedes earlier terrain patches")
 	host.world.rules.phase = MatchRules.Phase.PLAYING
-	for i in MatchSession.MAX_REPLAY:
+	for i in PredictedMatch.MAX_REPLAY:
 		host.fixed_step()
 	actor.position += Vector2(96.0, -128.0)
 	actor.weapons.set_initial_inventory([WeaponType.PISTOL, WeaponType.GRENADE])
@@ -317,8 +317,8 @@ func _load_match(tree: SceneTree) -> void:
 	NetSession._on_state(newest)
 	var client: PvpMatchClient = preload("res://scenes/pvp_game.tscn").instantiate()
 	tree.root.add_child(client)
-	expect(NetSession.match_inbox.is_empty() and client.phase == PvpMatchClient.Phase.ONLINE,
-			"mounting the remote match takes ownership of the loading inbox")
+	expect(NetSession.match_inbox.size() == 1 and client.phase == PvpMatchClient.Phase.ONLINE,
+			"the loading inbox survives until the first network tick")
 	var shown: Vector2 = client._sampler.sample(0.0, 0.0)["focus"]
 	var weapon := actor.weapons.cycle_instance(1)
 	var old_aim := client._aim_direction()
@@ -335,8 +335,10 @@ func _load_match(tree: SceneTree) -> void:
 	Settings.wheel_switch = true
 	client._unhandled_input(wheel)
 	Settings.wheel_switch = wheel_switch
+	var sent: Array = []
+	client.input_sampled.connect(func(packet: Array) -> void: sent.append(packet), CONNECT_ONE_SHOT)
 	client._physics_process(ActorStep.DT)
-	var input := client.session.outgoing_input
+	var input: Array = sent[0]
 	var actions: Array = input[InputBuffer.PACKET_ACTIONS]
 	expect(not client.controls.frozen and actions.size() == 1 and actions[0][InputBuffer.ACTION_WINST] == weapon,
 			"the same fixed step unlocks input and binds the queued wheel to the restored inventory")
@@ -355,11 +357,11 @@ func _load_match(tree: SceneTree) -> void:
 	host.world.rules.phase = MatchRules.Phase.WAITING
 	terrain.reset()
 	var next_round := _baseline(host)
-	client._on_event(1, NetEvent.Kind.BASELINE, next_round)
+	NetSession._on_event(1, NetEvent.Kind.ROUND, {"sub_hp": next_round["sub_hp"], "frame": next_round["frame"]})
 	client._physics_process(ActorStep.DT)
 	expect(client.session.world == world and client.session.latest_authority == next_round["frame"]
 			and client.terrain.get_modified().is_empty() and client.controls.frozen,
 			"the round baseline resets terrain and input on the mounted match")
 	client.free()
 	PvpSession.room.clear()
-	host.close()
+	host.world.close()

@@ -1,17 +1,20 @@
 extends Node
 
 const ROOM_REPLIES := {
-	NetEvent.Kind.LIST: [NetEvent.Kind.ROOM_LIST],
 	NetEvent.Kind.CREATE: [NetEvent.Kind.ROOM, NetEvent.Kind.MESSAGE],
 	NetEvent.Kind.JOIN: [NetEvent.Kind.ROOM, NetEvent.Kind.MESSAGE],
 	NetEvent.Kind.REJOIN: [NetEvent.Kind.BASELINE, NetEvent.Kind.ROOM, NetEvent.Kind.REJOIN_DENIED],
 }
 
+var _room_ip := "127.0.0.1"
+var _room_port := NetBus.DEFAULT_PORT
+var _via_tunnel := false
 var generation := 0
 var shutting_down := false
 var _processes := OwnedProcessGroup.new()
 var _cli_worker := CliWorker.new()
 var _cli_requests: Array = []
+enum MatchMessage { STATE, TERRAIN, ROUND }
 var match_inbox: Array = []
 
 # 主线程提交 EasyTier 命令并等待结果。取消标记和执行结果由两个线程共享，通过互斥锁访问。
@@ -20,7 +23,6 @@ class CliRequest extends RefCounted:
 	var args: PackedStringArray
 	var _mutex := Mutex.new()
 	var _cancelled := false
-	var _done := false
 	var _result: Array = []
 
 	func cancel() -> void:
@@ -37,14 +39,7 @@ class CliRequest extends RefCounted:
 	func finish(result: Array) -> void:
 		_mutex.lock()
 		_result = result
-		_done = true
 		_mutex.unlock()
-
-	func done() -> bool:
-		_mutex.lock()
-		var value := _done
-		_mutex.unlock()
-		return value
 
 	func result() -> Array:
 		_mutex.lock()
@@ -60,12 +55,8 @@ class CliWorker extends RefCounted:
 	var _queue: Array = []
 	var _stopping := false
 
-	func start() -> void:
-		var error := _thread.start(_run)
-		if error != OK: push_error("CLI 工作线程启动失败: ", error)
-
 	func submit(request: CliRequest) -> void:
-		if not _thread.is_started():
+		if not _thread.is_started() and _thread.start(_run) != OK:
 			request.finish([-1, "CLI 工作线程不可用"])
 			return
 		_mutex.lock()
@@ -111,24 +102,28 @@ class CliWorker extends RefCounted:
 		return [-1, "CLI 已取消" if request.cancelled() else "CLI 执行超时"]
 
 func _ready() -> void:
-	get_tree().auto_accept_quit = false
 	NetBus.event_received.connect(_on_event)
 	NetBus.state_received.connect(_on_state)
-	_cli_worker.start()
 
 func _on_event(_peer: int, kind: int, data: Variant) -> void:
 	match kind:
-		NetEvent.Kind.ROOM: PvpSession.room = data
+		NetEvent.Kind.ROOM:
+			PvpSession.room = data
+			_room_ip = NetBus.server_ip
+			_room_port = NetBus.server_port
+			_via_tunnel = _room_ip == "127.0.0.1" and Tunnel.on_network(data["code"]) and Tunnel.forward_port() == _room_port
+			if not data["in_match"]: match_inbox.clear()
 		NetEvent.Kind.REJOIN_DENIED: PvpSession.room.erase("token")
 		NetEvent.Kind.ROOM_CLOSED: PvpSession.room = {}
 		NetEvent.Kind.BASELINE: match_inbox.clear()
+		NetEvent.Kind.ROUND:
+			match_inbox.clear()
+			match_inbox.append([MatchMessage.ROUND, data])
 		NetEvent.Kind.TERRAIN:
-			if not PvpSession.baseline.is_empty():
-				match_inbox.append([kind, data])
+			match_inbox.append([MatchMessage.TERRAIN, data])
 
 func _on_state(frame: Dictionary) -> void:
-	if not PvpSession.baseline.is_empty():
-		match_inbox.append([-1, frame])
+	match_inbox.append([MatchMessage.STATE, frame])
 
 func take_match_inbox() -> Array:
 	var messages := match_inbox
@@ -148,132 +143,105 @@ func execute(path: String, args: PackedStringArray) -> Array:
 	if shutting_down: return [-1, "进程启动已取消"]
 	var request := CliRequest.new()
 	request.path = path
-	request.args = args.duplicate()
+	request.args = args
 	_cli_requests.append(request)
 	_cli_worker.submit(request)
-	while not request.done(): await get_tree().process_frame
 	var result := request.result()
+	while result.is_empty():
+		await get_tree().process_frame
+		result = request.result()
 	_cli_requests.erase(request)
 	return [-1, "CLI 已取消"] if request.cancelled() else result
-
-func send_hello() -> void:
-	if NetBus.can_send_to_server():
-		NetBus.send_event(NetEvent.Kind.HELLO, {"name": PvpSession.player_name, "hue": Settings.pvp_color_hue})
 
 func _lobby_port() -> int:
 	var forward := Tunnel.forward_port()
 	return forward if forward > 0 else NetBus.server_port
-
-func list_rooms() -> String:
-	return room_error(await _room_request(NetEvent.Kind.LIST, PvpSession.beta_mode, _lobby_port()))
 
 func create_room(data: Dictionary) -> String:
 	close()
 	var port := await LocalServer.launch_and_connect()
 	if port <= 0:
 		return "创建房间失败，请检查日志"
-	return room_error(await _room_request(NetEvent.Kind.CREATE, data, port))
+	return (await _room_request(NetEvent.Kind.CREATE, data, port)).message
 
 func join_room(code: String, endpoint: Dictionary = {}) -> String:
 	var payload := {"code": code, "beta": PvpSession.beta_mode}
-	var direct := _lan_endpoint(endpoint)
-	if not direct.is_empty():
-		var error := await _room_request(NetEvent.Kind.JOIN, payload, direct["port"], 8000, direct["ip"])
+	if not endpoint.is_empty():
+		var error := await _room_request(NetEvent.Kind.JOIN, payload, endpoint["port"], 8000, endpoint["ip"])
 		# 原请求仍有效且直连失败时，才尝试通过 EasyTier 隧道加入。
-		if error == OK or error == ERR_SKIP:
-			return room_error(error)
+		if not error.retryable():
+			return error.message
 	var port := _lobby_port() if Tunnel.on_network(code) and NetBus.can_send_to_server() else 0
 	if port <= 0:
 		var route := await Tunnel.start_client(code)
 		if route.is_empty() or route.has("error"):
 			return route.get("error", "")
 		port = route["port"]
-	return room_error(await _room_request(NetEvent.Kind.JOIN, payload, port))
+	return (await _room_request(NetEvent.Kind.JOIN, payload, port)).message
 
 
-## 直连端点须提供非空地址及 1024–65535 范围内的游戏端口。无效端点返回空字典，加入流程会尝试 EasyTier 隧道。
-func _lan_endpoint(endpoint: Dictionary) -> Dictionary:
-	if endpoint.is_empty():
-		return {}
-	var ip_value: Variant = endpoint.get("ip", "")
-	if not (ip_value is String or ip_value is StringName):
-		return {}
-	var ip := str(ip_value).strip_edges()
-	if ip.is_empty():
-		return {}
-	var port_value: Variant = endpoint.get("port", 0)
-	if not (port_value is int or port_value is float):
-		return {}
-	var port := int(port_value)
-	if port < 1024 or port > 65535:
-		return {}
-	return {"ip": ip, "port": port}
-
-func rejoin_room(retry := false) -> Error:
+func rejoin_room(retry := false) -> String:
 	var data := PvpSession.rejoin_payload()
-	if data.is_empty():
-		return ERR_INVALID_DATA
-	if not retry:
-		return await _room_request(NetEvent.Kind.REJOIN, data, _lobby_port(), 15000)
+	if data.is_empty(): return "回局凭据已失效，请重新建房或加入"
 	var attempt := generation
-	var deadline := Time.get_ticks_msec() + 60000
-	var tunnel_code := Tunnel.current_code() if Tunnel.forward_port() > 0 else ""
+	var deadline := Time.get_ticks_msec() + (60000 if retry else 15000)
 	while attempt == generation and Time.get_ticks_msec() < deadline:
-		NetBus.stop()
-		var port := NetBus.server_port
-		if not tunnel_code.is_empty():
-			port = await Tunnel.refresh_forward(tunnel_code, deadline)
-		if attempt != generation:
-			return ERR_SKIP
+		var port := _room_port
+		if _via_tunnel and (retry or not Tunnel.on_network(data["code"])):
+			port = await Tunnel.refresh_forward(data["code"], deadline)
+		if generation != attempt: return ""
 		var remaining := deadline - Time.get_ticks_msec()
 		if port > 0 and remaining > 0:
-			var error := await _room_request(NetEvent.Kind.REJOIN, data, port, mini(5000, remaining))
-			if error == OK or error == ERR_SKIP:
-				return error
+			var reply := await _room_request(NetEvent.Kind.REJOIN, data, port, mini(5000, remaining) if retry else remaining, _room_ip)
+			if generation != attempt: return ""
+			if not retry or not reply.retryable(): return reply.message
+		elif not retry:
+			break
+		NetBus.stop()
 		await get_tree().create_timer(1.0).timeout
-	if attempt != generation:
-		return ERR_SKIP
-	NetBus.stop()
-	return ERR_TIMEOUT
+	return "" if attempt != generation else "房间请求超时，请检查连接"
 
-func room_error(error: Error) -> String:
-	match error:
-		OK, ERR_SKIP: return ""
-		ERR_INVALID_DATA: return "回局凭据已失效，请重新建房或加入"
-		ERR_TIMEOUT: return "房间请求超时，请检查连接"
-		ERR_CANT_CONNECT, ERR_CONNECTION_ERROR: return "无法连接房间，请创建房间或输入房间号加入"
-		_: return "启动连接失败（%d）" % error
+class RoomReply:
+	var status: Error
+	var message: String
 
-# 只等待当前连接的预期回复。房间关闭通知也会结束此次等待。
-# host 为 127.0.0.1 时走回环连接，其余地址走局域网直连。
-func _room_request(kind: int, data: Variant, port: int, timeout_ms := 8000, host := "127.0.0.1") -> Error:
+	func _init(error: Error, reason := "") -> void:
+		status = error
+		match error:
+			ERR_TIMEOUT: message = "房间请求超时，请检查连接"
+			ERR_CANT_CONNECT, ERR_CONNECTION_ERROR: message = "无法连接房间，请创建房间或输入房间号加入"
+			OK, ERR_SKIP, ERR_UNAUTHORIZED: message = reason
+			_: message = "启动连接失败（%d）" % error
+
+	func retryable() -> bool:
+		return status in [ERR_TIMEOUT, ERR_CANT_CONNECT, ERR_CONNECTION_ERROR]
+
+func _room_request(kind: int, data: Dictionary, port: int, timeout_ms := 8000, host := "127.0.0.1") -> RoomReply:
 	var deadline := Time.get_ticks_msec() + timeout_ms
-	var error: Error
-	if host == "127.0.0.1":
-		error = await NetBus.connect_local(port, timeout_ms)
-	else:
-		error = await NetBus.connect_remote(host, port, timeout_ms)
-	if error != OK:
-		return error
+	var error := await NetBus.connect_server(host, port, timeout_ms)
+	if error != OK: return RoomReply.new(error)
 	var connection := NetBus.connection_generation
-	var expected: Array = ROOM_REPLIES[kind]
-	var replied := [false]
-	var observe := func(_peer: int, reply: int, _data: Variant) -> void:
-		if NetBus.connection_generation == connection and (reply in expected or reply == NetEvent.Kind.ROOM_CLOSED):
-			replied[0] = true
+	var replies: Array[RoomReply] = []
+	var observe := func(_peer: int, reply: int, payload: Variant) -> void:
+		if NetBus.connection_generation != connection: return
+		if reply == NetEvent.Kind.ROOM_CLOSED or reply in ROOM_REPLIES[kind]:
+			if reply in [NetEvent.Kind.MESSAGE, NetEvent.Kind.REJOIN_DENIED, NetEvent.Kind.ROOM_CLOSED]:
+				replies.append(RoomReply.new(ERR_UNAUTHORIZED, payload))
+			else:
+				_room_ip = host
+				_room_port = port
+				replies.append(RoomReply.new(OK))
 	NetBus.event_received.connect(observe)
-	if kind != NetEvent.Kind.REJOIN:
-		send_hello()
+	if kind in [NetEvent.Kind.CREATE, NetEvent.Kind.JOIN]:
+		data = data.merged({"name": PvpSession.player_name, "hue": Settings.pvp_color_hue})
 	NetBus.send_event(kind, data)
-	while not replied[0] and connection == NetBus.connection_generation and NetBus.can_send_to_server() \
+	while replies.is_empty() and connection == NetBus.connection_generation and NetBus.can_send_to_server() \
 			and Time.get_ticks_msec() < deadline:
 		await get_tree().create_timer(0.05).timeout
 	NetBus.event_received.disconnect(observe)
-	if replied[0]:
-		return OK
-	if connection != NetBus.connection_generation:
-		return ERR_SKIP
-	return ERR_TIMEOUT if NetBus.can_send_to_server() else ERR_CONNECTION_ERROR
+	if not replies.is_empty(): return replies[0]
+	if connection != NetBus.connection_generation: return RoomReply.new(ERR_SKIP)
+	return RoomReply.new(ERR_TIMEOUT if NetBus.can_send_to_server() else ERR_CONNECTION_ERROR)
 
 func disconnect_client() -> void:
 	generation += 1
@@ -286,11 +254,6 @@ func close() -> void:
 	_processes.stop_all()
 	Tunnel.reset()
 	LocalServer.reset()
-
-func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		shutting_down = true
-		get_tree().quit()
 
 func _exit_tree() -> void:
 	shutting_down = true

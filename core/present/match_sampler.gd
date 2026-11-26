@@ -25,6 +25,10 @@ func _init(size: Vector2, role: int) -> void:
 	_map_size = size
 	_role = role
 
+func accept_local(frame: Dictionary) -> void:
+	_previous = frame if _current.is_empty() else _current
+	_current = frame
+
 func accept(update: Dictionary) -> void:
 	_previous = update["previous"]
 	_current = update["current"]

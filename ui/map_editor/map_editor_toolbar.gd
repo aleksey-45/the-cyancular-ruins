@@ -15,7 +15,6 @@ signal notes_requested
 signal validate_requested
 signal play_requested
 signal exit_requested
-signal travel_requested(direction: int)
 
 var shortcuts: Dictionary[int, Callable] = {}
 
@@ -39,9 +38,9 @@ func _build() -> void:
 	_command(files, "另存为…", func() -> void: save_as_requested.emit(), cmd | KEY_MASK_SHIFT | KEY_S)
 
 	var edit := _command_menu(bar, "编辑")
-	_command(edit, "撤销", func() -> void: undo_requested.emit(), cmd | KEY_Z)
-	_command(edit, "重做", func() -> void: redo_requested.emit(), cmd | KEY_MASK_SHIFT | KEY_Z)
-	_shortcuts_for(cmd | KEY_Y, func() -> void: travel_requested.emit(1))
+	_command(edit, "撤销", undo_requested.emit, cmd | KEY_Z)
+	_command(edit, "重做", redo_requested.emit, cmd | KEY_MASK_SHIFT | KEY_Z)
+	_shortcuts_for(cmd | KEY_Y, redo_requested.emit)
 	edit.add_separator()
 	_command(edit, "复制选区", func() -> void: copy_requested.emit(), cmd | KEY_C)
 	_command(edit, "剪切选区", func() -> void: cut_requested.emit(), cmd | KEY_X)

@@ -9,7 +9,7 @@ class MeasuredTerrain extends Terrain:
 
 func run(tree: SceneTree) -> void:
 	var node := world(tree)
-	var level := _terrain
+	var level := node.terrain
 	_seam(node)
 	_beam(level)
 	_queries(level)
@@ -24,7 +24,7 @@ func run(tree: SceneTree) -> void:
 	level.apply_at(before, {})
 	expect(level.get_hp(sub) == original - 1, "rewind restores residual HP, not full health")
 	expect(level.get_hp(adjacent) == adjacent_hp, "rewind restores both subcells from the first saved macro state")
-	var replica := MeasuredTerrain.new(_document)
+	var replica := MeasuredTerrain.new(node.document)
 	var root := replica.version
 	var scans := replica.wall_rebuilds
 	replica.apply_at(root, {sub: 0, adjacent: 0})
@@ -81,8 +81,8 @@ func _water_depth(tree: SceneTree) -> void:
 		cells[Vector2i(0, y)] = 21
 	for y in 8:
 		cells[Vector2i(1, y)] = 22
-	world_with_walls(tree, 4, 8, cells)
-	var terrain := _terrain
+	var parent := world_with_walls(tree, 4, 8, cells)
+	var terrain := parent.terrain
 	expect(terrain.water_depth(Vector2(32, 2)) == 130.0
 			and terrain.water_depth(Vector2(32, 514)) == 130.0,
 			"water depth follows the same surface on both sides of the vertical seam")
@@ -94,8 +94,8 @@ func _water_depth(tree: SceneTree) -> void:
 func _destruction_units(tree: SceneTree) -> void:
 	var trunk := wall_texture()
 	var leaf := wall_texture(true)
-	world_with_walls(tree, 4, 4, {Vector2i.ZERO: trunk, Vector2i(3, 0): leaf})
-	var terrain := _terrain
+	var parent := world_with_walls(tree, 4, 4, {Vector2i.ZERO: trunk, Vector2i(3, 0): leaf})
+	var terrain := parent.terrain
 	var point := Vector2(256, 8)
 	var hp := TileDefs.hit_points[trunk]
 	var original := block_hp(terrain, Vector2i.ZERO)
@@ -189,15 +189,15 @@ func _beam(terrain: Terrain) -> void:
 	var again := terrain.trace_beam(start, direction, 64.0, 0)
 	expect(again["points"] == beam["points"] and again["contacts"] == beam["contacts"],
 			"beam trace is deterministic")
-	var empty_world := Terrain.new()
+	var empty_world := Terrain.new(CyrmMap.create(Vector2i(16, 16)))
 	var straight := empty_world.trace_beam(Vector2.ZERO, Vector2.RIGHT, 100.0, 0)
 	expect((straight["points"] as PackedVector2Array).size() == 2 and (straight["contacts"] as Array).is_empty(),
 			"beam trace on empty terrain is a straight segment")
 
 ## 底部墙体横贯地图。测试检查左右边缘外侧是否也有墙体碰撞形状。
-func _seam(node: Node2D) -> void:
-	var terrain := _terrain
-	var centers := terrain.body_shapes(0)
+func _seam(node: TestWorld) -> void:
+	var terrain := node.terrain
+	var centers := _body_shapes(terrain, 0)
 	expect(centers.has(Vector2(256.0, 224.0)), "bottom row is written into the world")
 	expect(centers.has(Vector2(768.0, 224.0)), "seam mirror repeats the bottom row across the left edge")
 	expect(centers.has(Vector2(-256.0, 224.0)), "a wall spanning both edges also repeats across the right edge")
@@ -208,13 +208,13 @@ func _seam(node: Node2D) -> void:
 ## 在地图中央、边缘及角落各放置墙体，比较重复的碰撞形状与原墙体的相对位置。
 func _mirror_topology(tree: SceneTree) -> void:
 	var texture := wall_texture()
-	world_with_walls(tree, 20, 20, {Vector2i(10, 10): texture, Vector2i(10, 19): texture,
+	var parent := world_with_walls(tree, 20, 20, {Vector2i(10, 10): texture, Vector2i(10, 19): texture,
 			Vector2i(0, 5): texture, Vector2i(0, 0): texture})
-	var terrain := _terrain
+	var terrain := parent.terrain
 	var centers := {}
 	var total := 0
 	for key in terrain._chunks.size():
-		var shapes := terrain.body_shapes(key)
+		var shapes := _body_shapes(terrain, key)
 		total += shapes.size()
 		for center in shapes:
 			centers[center] = true
@@ -299,7 +299,7 @@ func _toroidal_sight(tree: SceneTree) -> void:
 	cleanup()
 	var texture := wall_texture()
 	var parent := world_with_walls(tree, 16, 16, {Vector2i(8, 8): texture})
-	var terrain := _terrain
+	var terrain := parent.terrain
 	var from := Vector2(900, 544)
 	var to := Vector2(100, 544)
 	expect(terrain.line_of_sight(from, to),
@@ -308,7 +308,7 @@ func _toroidal_sight(tree: SceneTree) -> void:
 			"the same middle wall still blocks a straight line")
 	cleanup()
 	parent = world_with_walls(tree, 16, 16, {Vector2i(15, 8): texture})
-	terrain = _terrain
+	terrain = parent.terrain
 	expect(not terrain.line_of_sight(from, to), "a wall on the seam blocks the wrapping sight line")
 	var victim := player(parent, 3)
 	victim.position = Vector2(10, 544)
@@ -318,15 +318,15 @@ func _toroidal_sight(tree: SceneTree) -> void:
 	sim.resolve_blast(Vector2(1010, 544), {"radius": 128.0, "damage": 25, "impact": 0}, null)
 	expect(sim.hits.size() == 1 and sim.hits[0][2] > 0, "an explosion at the seam damages the actor once across it")
 	cleanup()
-	world_from_solid(tree, 8, 6, func(sx: int, sy: int) -> bool: return sx == 2 and sy == 2)
-	expect(not _terrain.line_of_sight(Vector2(496, 360), Vector2(48, 48)),
+	parent = world_from_solid(tree, 8, 6, func(sx: int, sy: int) -> bool: return sx == 2 and sy == 2)
+	expect(not parent.terrain.line_of_sight(Vector2(496, 360), Vector2(48, 48)),
 			"a wall beyond both seams still blocks the line of sight")
 
 func _beam_hole(tree: SceneTree) -> void:
 	var texture := wall_texture()
 	cleanup()
 	var parent := world_with_walls(tree, 16, 16, {Vector2i(10, 8): texture, Vector2i(11, 8): texture})
-	var terrain := _terrain
+	var terrain := parent.terrain
 	var world := parent.combat.terrain.physics
 	var down := [Vector2(704, 480), Vector2(704, 600)]
 	expect(not world.ray_hit(down[0], down[1], CombatProfiles.Layer.TERRAIN).is_empty(),
@@ -511,3 +511,13 @@ func _respawn_format() -> void:
 			"a cell without foot support is rejected")
 	expect(SpawnPicker.spawn_cell_problem(demo, demo_respawn[1][0]) == "",
 			"a configured respawn cell passes clearance and support checks")
+
+# 读取指定地形区域的形状中心点，让测试能验证地图边缘两侧的碰撞位置。
+func _body_shapes(terrain: Terrain, key: int) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var body := terrain._chunks[key].body
+	if not body.is_valid():
+		return out
+	for i in PhysicsServer2D.body_get_shape_count(body):
+		out.append(PhysicsServer2D.body_get_shape_transform(body, i).origin)
+	return out

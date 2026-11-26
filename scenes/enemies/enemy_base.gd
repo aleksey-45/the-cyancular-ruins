@@ -294,6 +294,9 @@ func toroidal_delta_to_player() -> Vector2:
 func _wrap() -> void:
 	position = ToroidalGrid.wrap_to_range(position, terrain.map_size)
 
+func lunge_age() -> float:
+	return 0.0
+
 func capture_state() -> Array:
 	var row := []
 	for field: StringName in _rewind_fields:

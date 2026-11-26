@@ -3,7 +3,6 @@ extends RefCounted
 
 # 提供二维物理空间的位移检测、射线查询和形状查询。跨地图边缘的查询可从另一侧接续。
 
-
 ## 未分队的玩家沿用 A 队的碰撞层。B 队有自己的碰撞层。
 static func team_layer(team: int) -> int:
 	return CombatProfiles.Layer.TEAM_B if team == 2 else CombatProfiles.Layer.TEAM_A
@@ -108,12 +107,8 @@ func circle_overlaps(center: Vector2, radius: float, mask: int, exclude: Array =
 func shape_overlaps(shape: Shape2D, from: Transform2D, mask: int, exclude: Array = []) -> Array:
 	_shape.shape = shape
 	_shape.transform = from
-	_shape.motion = Vector2.ZERO
 	_shape.collision_mask = mask
 	_shape.exclude = exclude
-	_shape.collide_with_bodies = true
-	_shape.collide_with_areas = false
-	_shape.margin = 0.0
 	return world.direct_space_state.intersect_shape(_shape)
 
 enum CorridorContact { TARGET, POINT }

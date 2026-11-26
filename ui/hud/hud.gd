@@ -7,7 +7,7 @@ const LAYER := 129
 const MARGIN := UiDesign.MARGIN
 const FONT_SIZE := UiDesign.T_H2
 
-const WEAPON_ICON_W := 96.0              # 左下角剪影/丢弃进度条宽度（设计像素档）。
+const WEAPON_ICON_W := 96.0              # 武器剪影和丢弃进度条共用的宽度，单位为逻辑像素。
 const WEAPON_ROW_W := 320.0              # 每把武器一行方框的固定宽。
 const WEAPON_PANEL_W := WEAPON_ROW_W + UiDesign.SP_3 * 2.0
 

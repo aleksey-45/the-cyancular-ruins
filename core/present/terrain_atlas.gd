@@ -28,10 +28,10 @@ static func source_image() -> Image:
 
 static func background_image(map: Dictionary, layer: int) -> Image:
 	var bytes: PackedByteArray = map.layers[layer].to_byte_array()
-	bytes.bswap32() # 地图存 0xRRGGBBAA，图像按 R、G、B、A 读取字节。
+	bytes.bswap32() # 将 0xRRGGBBAA 整数的小端字节顺序转换为图像需要的 R、G、B、A 顺序。
 	return Image.create_from_data(map.size.x, map.size.y, false, Image.FORMAT_RGBA8, bytes)
 
-# idx 是原始图集中的瓦片索引，返回对应的像素矩形。
+## 返回瓦片在原始图集中的矩形，坐标和尺寸均以纹理像素为单位。
 static func source_rect(idx: int) -> Rect2i:
 	return Rect2i((idx % SRC_COLS) * SRC_TILE, (idx / SRC_COLS) * SRC_TILE, SRC_TILE, SRC_TILE)
 

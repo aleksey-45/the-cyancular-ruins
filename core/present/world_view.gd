@@ -210,8 +210,8 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 			elif pose.haste and pose.anchor.distance_squared_to(frame.focus) < 1500.0 * 1500.0:
 				glow = ENEMY_GLOW
 	else:
-		var skin_tint := Color.WHITE if frame.mode == MatchFrame.Mode.SOLO else pose.name_color(frame.mode) / UiDesign.C_TEAM_A
-		if frame.mode == MatchFrame.Mode.DUEL or frame.mode == MatchFrame.Mode.TEAM:
+		var skin_tint := Color.WHITE if frame.mode == WorldSpec.SOLO else pose.name_color(frame.mode) / UiDesign.C_TEAM_A
+		if frame.mode == WorldSpec.DUEL or frame.mode == WorldSpec.TEAM:
 			tint = skin_tint
 		var hit_left := pose.hit_left
 		var alpha := 0.4 if hit_left > 0.0 and int(hit_left * 20.0) % 2 == 0 else 1.0
@@ -303,7 +303,7 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 		life = ENEMY_GHOST_LIFE
 	else:
 		var foreground := pose.rewind and pose.remote
-		alternate = pose.haste and frame.mode == MatchFrame.Mode.SOLO
+		alternate = pose.haste and frame.mode == WorldSpec.SOLO
 		if alternate:
 			interval = HASTE_GHOST_INTERVAL
 		elif pose.haste:
@@ -352,15 +352,12 @@ func _pickup_prompt_node(index: int) -> PickupPrompt:
 	while _pickup_nodes.size() <= index:
 		var node := PickupPrompt.new()
 		node.name = "PickupPrompt%d" % _pickup_nodes.size()
-		_hud_parent().add_child(node)
+		_canvas.overlay_layer.add_child(node)
 		_pickup_nodes.append(node)
 	return _pickup_nodes[index]
 
 
 # 提示跟随视口，沿用世界坐标，绘制在角色上方且不受昼夜环境色调制。
-func _hud_parent() -> Node2D:
-	return _canvas._overlay if _canvas._overlay != null else _canvas
-
 func _draw_effects(frame: MatchFrame, grain_target: Vector2) -> void:
 	var now := frame.now
 	for hit_row: Array in _hits.values():
@@ -430,7 +427,7 @@ func _hp_bar(index: int) -> EnemyHpBar:
 		var node := EnemyHpBar.new()
 		node.name = "EnemyHpBar%d" % _hp_nodes.size()
 		node.z_index = 100
-		_hud_parent().add_child(node)
+		_canvas.overlay_layer.add_child(node)
 		_hp_nodes.append(node)
 	return _hp_nodes[index]
 
@@ -446,7 +443,7 @@ func _reload(at: Vector2, facing: int, progress: float, remaining: float) -> voi
 	if not is_instance_valid(_reload_node):
 		_reload_node = ReloadRing.new()
 		_reload_node.name = "ReloadRing"
-		_hud_parent().add_child(_reload_node)
+		_canvas.overlay_layer.add_child(_reload_node)
 	_reload_node.position = at + Vector2(-58.0 * facing, -44.0)
 	_reload_node.set_progress(progress, remaining)
 	_reload_node.show()

@@ -12,6 +12,11 @@ enum {
 	WEAPON_NEXT, WEAPON_INST, INVENTORY, EQUIPMENT, SIZE,
 }
 
+const REWIND_FIELDS := [POS, GROUNDED, HASTE_MULT, VEL, FACING, STATE_LOCK_TIMER, COYOTE_TIMER,
+	JUMP_BUFFER_TIMER, JUMP_CUT_APPLIED, SQUAT, CHARGE, CHARGE_TIMER, CLIMB_LATCHED, IN_WATER,
+	KNOCK_VEL, WATERPROOF_TIMER, WAS_SUBMERGED, DROWN_TIMER, IFRAMES, CONTROLS_LOCKED, STATE,
+	WATERPROOF, HP, DOWNED, AUTO_JUMP]
+
 const PROPERTIES := [
 	&"position", &"_grounded", &"personal_haste_mult", &"velocity", &"facing_direction",
 	&"state_lock_timer", &"coyote_timer", &"jump_buffer_timer", &"jump_cut_applied", &"is_squat",

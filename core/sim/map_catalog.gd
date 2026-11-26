@@ -65,9 +65,6 @@ static func _entry(path: String) -> Dictionary:
 	_entries[bytes] = entry
 	return entry
 
-static func thumbnail(path: String) -> Texture2D:
-	return _entry(path).get("texture")
-
 static func _build_image(map: Dictionary, sides: Dictionary) -> Image:
 	var size: Vector2i = map.size
 	var cells: PackedInt32Array = map.layers[CyrmMap.SCENE]

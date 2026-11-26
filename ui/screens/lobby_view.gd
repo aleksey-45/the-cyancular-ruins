@@ -7,7 +7,6 @@ signal nickname_changed(text: String)
 signal filter_changed(mode: String)
 signal create_requested(mode: String, options: Dictionary)
 signal join_requested(code: String, endpoint: Dictionary)
-signal room_chosen(code: String, endpoint: Dictionary)
 signal copy_requested
 signal team_requested(side: int)
 signal start_requested
@@ -18,13 +17,13 @@ signal preference_changed(value: Variant, key: StringName)
 # 提供「全部」和三个对战模式筛选项，空字符串代表「全部」。
 const FILTERS := [
 	["", "全部"],
-	[PvpSession.MODE_PVP, "1v1"],
-	[PvpSession.MODE_TEAM, "团队对抗"],
-	[PvpSession.MODE_ROYALE, "大乱斗"],
+	[WorldSpec.DUEL, "1v1"],
+	[WorldSpec.TEAM, "团队对抗"],
+	[WorldSpec.ROYALE, "大乱斗"],
 ]
 const FILTER_COLORS := {
-	PvpSession.MODE_TEAM: UiDesign.C_MODE_TEAM,
-	PvpSession.MODE_ROYALE: UiDesign.C_MODE_ROYALE,
+	WorldSpec.TEAM: UiDesign.C_MODE_TEAM,
+	WorldSpec.ROYALE: UiDesign.C_MODE_ROYALE,
 }
 # 房间号输入框为 8 位数字和内边距预留空间。
 const CODE_MIN_UNITS := 6
@@ -63,9 +62,7 @@ func mount(nickname: String, prefs: Dictionary) -> void:
 
 ## 重建符合当前筛选条件的已发现房间列表。
 func present_rooms(rooms: Array[Dictionary]) -> void:
-	_rooms.clear()
-	for room in rooms:
-		_rooms.append(room.duplicate(true))
+	_rooms = rooms
 	_rebuild()
 
 
@@ -90,10 +87,6 @@ func show_wait(room: Dictionary) -> void:
 	for item: Control in [_create_button, _join_button, _filters_row, _browser]:
 		item.visible = not open
 	_display_code(room.get("code", ""))
-
-
-func close_wait() -> void:
-	show_wait({})
 
 
 func close_create() -> void:
@@ -299,8 +292,7 @@ func _overlay_center(layer_name: String) -> CenterContainer:
 func _build_join() -> void:
 	_join = PanelContainer.new()
 	_join.name = "JoinDialog"
-	UiDesign.skin_menu_panel(_join, Vector2(UiDesign.SP_9, UiDesign.SP_7))
-	var body := _join.get_node("Body") as PanelContainer
+	var body := UiDesign.skin_menu_panel(_join, Vector2(UiDesign.SP_9, UiDesign.SP_7))
 	var box := VBoxContainer.new()
 	box.name = "Content"
 	box.custom_minimum_size.x = JOIN_MIN_W
@@ -371,7 +363,7 @@ func _display_code(code: String) -> void:
 
 
 func _open_create() -> void:
-	_create.open(PvpSession.MODE_PVP if _mode.is_empty() else _mode)
+	_create.open(WorldSpec.DUEL if _mode.is_empty() else _mode)
 
 
 func _join_clicked() -> void:

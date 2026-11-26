@@ -3,7 +3,7 @@ extends RefCounted
 
 const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
 
-static func projectiles(combat: CombatSimulator, actor: Player, shot: Dictionary, spec: Dictionary) -> PackedVector2Array:
+static func projectiles(combat: CombatSimulator, actor: Player, shot: Dictionary, spec: Dictionary) -> void:
 	var id := shot_id(actor.role, shot["serial"])
 	var rng := RandomNumberGenerator.new()
 	rng.seed = ("%d:%d" % [actor.role, shot["serial"]]).hash()
@@ -11,13 +11,10 @@ static func projectiles(combat: CombatSimulator, actor: Player, shot: Dictionary
 	var direction: Vector2 = shot["dir"]
 	var speed := launch_speed(spec, shot["charge"]) * float(shot["speed_mult"])
 	var damage := attack_damage(spec, shot["charge"])
-	var velocities := PackedVector2Array()
 	for pellet in int(spec["count"]):
 		var angle := direction.angle() + rng.randf_range(-spread, spread)
 		var velocity := Vector2.from_angle(angle) * speed
-		velocities.append(velocity)
 		combat.spawn_projectile(pellet_id(id, pellet), shot["type_id"], actor, shot["pos"], velocity, damage)
-	return velocities
 
 static func shot_id(role: int, serial: int) -> int:
 	return (role << 48) | (serial << 8)
@@ -77,11 +74,10 @@ static func beam(combat: CombatSimulator, shooter: Player, shot: Dictionary, spe
 			combat.record_destruction(shooter.role, terrain.damage_beam(cell, spec["tile_chip"]))
 	return points
 
-static func melee(combat: CombatSimulator, shooter: Player, shot: Dictionary, spec: Dictionary) -> PackedVector2Array:
+static func melee(combat: CombatSimulator, shooter: Player, shot: Dictionary, spec: Dictionary) -> void:
 	var from: Vector2 = shot["pos"]
 	var points := PackedVector2Array([from, from + shot["dir"] * float(spec["range"])])
 	_hit_corridor(combat, shooter, points, spec, shot["charge"], true)
-	return points
 
 static func _hit_corridor(combat: CombatSimulator, shooter: Player, points: PackedVector2Array,
 		spec: Dictionary, charge: float, block_walls: bool) -> void:

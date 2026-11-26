@@ -6,7 +6,6 @@ const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
 const Actor := preload("res://core/sim/player_state_schema.gd")
 const Enemy := MatchWorld.EnemyView
 const Pose := MatchSampler.Pose
-const Mode := MatchFrame.Mode
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
 
@@ -32,10 +31,9 @@ func _init(spec: WorldSpec, terrain: Terrain, role: int, account: GrainAccount) 
 	_spec = spec
 	_terrain = terrain
 	_role = role
-	_team_counts = TeamRules.team_counts(spec.teams) if spec.mode == WorldSpec.TEAM else {}
+	_team_counts = spec.team_counts
 	_account = account
-	frame.mode = {WorldSpec.SOLO: Mode.SOLO, WorldSpec.DUEL: Mode.DUEL,
-		WorldSpec.TEAM: Mode.TEAM, WorldSpec.ROYALE: Mode.ROYALE}[spec.mode]
+	frame.mode = spec.mode
 	if account != null:
 		frame.clock = MatchFrame.Clock.new()
 		_clock(account.capture_state(), false, false)
@@ -50,17 +48,17 @@ func reset() -> void:
 	_locked = false
 	_round_tick = -1
 
-func compose(sample: Dictionary, now: float, local_view: Dictionary) -> MatchFrame:
+func compose(sample: Dictionary, now: float, drop: float, walls: Dictionary) -> MatchFrame:
 	var own: Array = sample["local"]
 	var health: Array = sample["health"]
-	frame.begin(now - frame.now, sample["focus"])
+	frame.begin(now, sample["focus"])
 	if not _health.is_empty() and _health[Actor.LIFE] != health[Actor.LIFE]:
 		reset()
 		frame.cues.append(["reset"])
 	frame.hit_ratio = 0.0
 	frame.day_minute = preview_minute if preview_minute >= 0.0 else Daylight.minute_at(sample["elapsed"])
 	frame.kills = sample["kills"]
-	frame.wall_changes = local_view["walls"]
+	frame.wall_changes = walls
 	frame.trajectories = Settings.pvp_show_trajectories
 	frame.radar_players = Settings.pvp_minimap_show_enemy
 	var haste: bool = own[Actor.HASTE_MULT] > 1.0 or sample["time_mode"] == WorldTime.Mode.HASTE
@@ -73,7 +71,7 @@ func compose(sample: Dictionary, now: float, local_view: Dictionary) -> MatchFra
 	var hull := CFG.crouched_hull if own[Actor.SQUAT] or health[Actor.DOWNED] else CFG.standing_hull
 	_splash(_role, body * hull, own[Actor.VEL])
 	frame.aim_guide = _aim_guide(own, frame.actors[0], sample["time_mode"] == WorldTime.Mode.HASTE)
-	frame.drop_progress = local_view["drop"] if frame.actors[0].weapon != 0 and frame.actors[0].reload_left <= 0.0 else 0.0
+	frame.drop_progress = drop if frame.actors[0].weapon != 0 and frame.actors[0].reload_left <= 0.0 else 0.0
 	_sample_hud(own, health)
 	if frame.clock != null:
 		_clock(sample["account"], rewind, haste)
@@ -120,7 +118,7 @@ func _player_pose(id: int, pos: Vector2, velocity: Vector2, row: Array, health: 
 		pose.reload_left = gun[GunBody.StateSlot.RELOAD_LEFT]
 		if gun[GunBody.StateSlot.AIMING] and weapon.has("draw_length"):
 			pose.bow_draw = GunBody.charge_for_hold(weapon, gun[GunBody.StateSlot.HOLD])
-	if frame.mode != Mode.SOLO:
+	if frame.mode != WorldSpec.SOLO:
 		pose.name = names.get(id, "玩家%d" % id)
 		pose.team = _spec.teams.get(id, id)
 		pose.hue = float(hues.get(id, 0.0)) / 360.0
@@ -164,16 +162,16 @@ func _player_cues(id: int, row: Array, health: Array, pos: Vector2, rewind: bool
 			frame.hit_ratio = float(damage) / _max_hp(id)
 			frame.cues.append(["sound", "hurt"])
 			frame.cues.append(["motion", id, &"hurt", 0.0])
-			if frame.mode == Mode.SOLO:
+			if frame.mode == WorldSpec.SOLO:
 				frame.cues.append(["number", id, pos, damage, true])
 		else:
 			frame.cues.append(["motion", id, &"hurt", 0.0])
 			if health[Actor.LAST_ATTACKER] == _role:
 				frame.cues.append(["hit"])
-	if health[Actor.DOWNED] and not previous[Actor.DOWNED] and frame.mode != Mode.SOLO:
+	if health[Actor.DOWNED] and not previous[Actor.DOWNED] and frame.mode != WorldSpec.SOLO:
 		if mine:
 			frame.cues.append(["streak_reset"])
-		elif frame.mode == Mode.DUEL or health[Actor.LAST_ATTACKER] == _role:
+		elif frame.mode == WorldSpec.DUEL or health[Actor.LAST_ATTACKER] == _role:
 			frame.cues.append(["kill", names.get(id, "玩家%d" % id)])
 	if rewind or before[Actor.REWIND] or health[Actor.DOWNED]:
 		return
@@ -202,7 +200,7 @@ func _sample_hud(row: Array, health: Array) -> void:
 	var entries: PackedInt32Array = row[Actor.INVENTORY]
 	var inst: int = row[Actor.WEAPON_INST]
 	frame.inventory = WeaponInventory.layout(entries, inst)
-	var type := Actor.equipped_type(row)
+	var type: int = frame.actors[0].weapon
 	frame.magazine = int(WeaponRegistry.definition(type).get("mag", 0)) if type != 0 else 0
 	frame.ammo = entries[frame.inventory[0] * WeaponInventory.STRIDE + WeaponInventory.CARRIED] if frame.magazine > 0 else -1
 
@@ -219,7 +217,7 @@ func _clock(account: Array, rewind: bool, haste: bool) -> void:
 	clock.borrowed = loan > 0.5
 	clock.allowance = -roundi(loan) if clock.borrowed else roundi(_account.window - used)
 	clock.long_turns = clampf((used + loan) / window, 0.0, 1.0 + _account.loan_max / window)
-	clock.loan_depth = loan / _account.loan_max if frame.mode == Mode.SOLO and _account.loan_max > 0.0 else 0.0
+	clock.loan_depth = loan / _account.loan_max if frame.mode == WorldSpec.SOLO and _account.loan_max > 0.0 else 0.0
 	clock.rewind = rewind
 	clock.haste = haste
 	if _balance >= 0.0 and clock.balance > _balance:
@@ -283,9 +281,8 @@ func _sample_objects(sample: Dictionary, own: Array, rewind: bool) -> void:
 		frame.sample_beam(sample["beams"][id], at)
 	for row: Array in sample["pickups"].values():
 		var offset := ToroidalGrid.toroidal_delta_px(own[Actor.POS], row[WeaponPickup.POS], _terrain.map_size)
-		var unlocked: bool = row[WeaponPickup.LOCKED_ROLE] != _role or sample["pickup_tick"] >= row[WeaponPickup.UNLOCK_TICK]
-		var in_reach := offset.length_squared() <= CFG.weapon_pickup_radius ** 2
-		var available: bool = in_reach and unlocked and row[WeaponPickup.TYPE] in _spec.weapons
+		var available := GroundWeaponField.available(_role, _spec.weapons, row[WeaponPickup.TYPE],
+			row[WeaponPickup.LOCKED_ROLE], row[WeaponPickup.UNLOCK_TICK], sample["pickup_tick"], offset.length_squared())
 		frame.pickups.append([row[WeaponPickup.TYPE], frame.focus + offset, available])
 	if not rewind:
 		for id: int in sample["blasts"]:

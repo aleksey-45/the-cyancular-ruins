@@ -43,13 +43,7 @@ var _placements: Array = []
 var permanent_dirty := true
 var ledges_dirty := true
 
-static func _wrap(value: int, span: int) -> int:
-	var n := value % span
-	return n + span if n < 0 else n
-
-func _init(map: Dictionary = {}) -> void:
-	if map.is_empty(): return
-
+func _init(map: Dictionary) -> void:
 	columns = map.size.x
 	rows = map.size.y
 	map_size = Vector2(map.size * SUB_SIZE)
@@ -68,19 +62,14 @@ func _init(map: Dictionary = {}) -> void:
 		_queue_chunk(key)
 	_flush_collisions()
 
-func empty() -> bool:
-	return columns == 0 or rows == 0
-
 func cell(position: Vector2) -> Vector2i:
-	if empty(): return Vector2i.ZERO
 	return ToroidalGrid.cell_of(position, SUB_SIZE, columns, rows)
 
 func _material(index: int) -> int:
 	return CyrmMap.tile_material(_cells[index])
 
 func material_at(at: Vector2i) -> int:
-	if empty(): return 0
-	var i := _wrap(at.y, rows) * columns + _wrap(at.x, columns)
+	var i := posmod(at.y, rows) * columns + posmod(at.x, columns)
 	return _material(i) if _hp[i] > 0 else 0
 
 func sub_index(at: Vector2i) -> int:
@@ -99,12 +88,6 @@ func get_hp(at: Vector2i) -> int:
 	var i := sub_index(at)
 	return 0 if i < 0 else _hp[i]
 
-func climb_speed(tex: int) -> float:
-	return TileDefs.climb[tex]
-
-func descent_speed(tex: int) -> float:
-	return TileDefs.descent[tex]
-
 func water(position: Vector2) -> bool:
 	return _water_cell(cell(position))
 
@@ -122,7 +105,8 @@ func water_depth(position: Vector2) -> float:
 	return INF
 
 func water_multiplier(position: Vector2) -> float:
-	return TileDefs.decay[material_at(cell(position))] if water(position) else 1.0
+	var material := material_at(cell(position))
+	return TileDefs.decay[material] if TileDefs.is_liquid(material) else 1.0
 
 func cell_center(at: Vector2i) -> Vector2:
 	return Vector2((at.x + 0.5) * SUB_SIZE, (at.y + 0.5) * SUB_SIZE)
@@ -130,8 +114,6 @@ func cell_center(at: Vector2i) -> Vector2:
 ## 沿两点之间的最短路线检查地形遮挡。
 ## 路线横跨地图边缘时，在另一侧继续发射射线。
 func line_of_sight(from: Vector2, to: Vector2) -> bool:
-	if empty():
-		return true
 	var delta := ToroidalGrid.toroidal_delta_px(from, to, map_size)
 	if delta.is_zero_approx():
 		return true
@@ -161,14 +143,10 @@ func _ray_between(from: Vector2, to: Vector2) -> Dictionary:
 ## 返回的 contacts 中保存被光束击中的子格坐标，供地形伤害结算。
 func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces: int) -> Dictionary:
 	var points := PackedVector2Array([origin])
-	var hit_points := PackedVector2Array()
 	var contacts: Array = []
 	var d := direction.normalized()
 	if d == Vector2.ZERO:
 		d = Vector2(1.0, 0.0)
-	if empty():
-		points.append(origin + d * length)
-		return {"points": points, "contacts": contacts, "hit_points": hit_points}
 	var size := map_size
 	var p := ToroidalGrid.wrap_to_range(origin, size)
 	var shift := origin - p
@@ -185,7 +163,6 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 			var point: Vector2 = hit["position"]
 			var normal: Vector2 = hit["normal"]
 			points.append(point + shift)
-			hit_points.append(point + shift)
 			contacts.append(cell(point - normal * 0.5))
 			remaining -= p.distance_to(point)
 			ended_on_hit = true
@@ -206,11 +183,11 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 		shift += q - p
 	if not ended_on_hit:
 		points.append(p + shift)
-	return {"points": points, "contacts": contacts, "hit_points": hit_points}
+	return {"points": points, "contacts": contacts}
 
 ## 检查矩形是否碰到实心瓦片。将 with_liquid 设为 true 也会检查水体。
 func rect_overlaps(bounds: Rect2, with_liquid: bool) -> bool:
-	if empty() or not bounds.has_area(): return false
+	if not bounds.has_area(): return false
 	var first := Vector2i((bounds.position / SUB_SIZE).floor())
 	var end := Vector2i((bounds.end / SUB_SIZE).ceil())
 	for y in range(first.y, end.y):
@@ -221,7 +198,7 @@ func rect_overlaps(bounds: Rect2, with_liquid: bool) -> bool:
 
 func elastic_alive(position: Vector2) -> bool:
 	var i := sub_index(cell(position))
-	return i >= 0 and _hp[i] > 0 and TileDefs.elastic[_material(i)] != 0
+	return _hp[i] > 0 and TileDefs.elastic[_material(i)] != 0
 
 func _write_hp(index: int, next: int) -> void:
 	_hp[index] = next
@@ -250,7 +227,7 @@ func _occupancy_changed(index: int, before: int) -> void:
 
 ## 立即扣除耐久度并返回破坏的子格数。commit() 更新碰撞和渲染记录。
 func damage_impact(position: Vector2, normal: Vector2, amount: int) -> int:
-	if empty() or amount <= 0:
+	if amount <= 0:
 		return 0
 	var hit := cell(position - normal * 0.5)
 	var index := sub_index(hit)
@@ -281,7 +258,7 @@ func _damage_block(block: Vector2i, side: int, amount: int, mask: int) -> int:
 	return destroyed
 
 func damage_blast(center: Vector2, radius: float, damage: int) -> int:
-	if empty() or radius <= 0.0:
+	if radius <= 0.0:
 		return 0
 	# 每个 32 像素块用块内距爆心最近的可破坏子格计算伤害。
 	var nearest: Dictionary[Vector2i, float] = {}
@@ -291,8 +268,8 @@ func damage_blast(center: Vector2, radius: float, damage: int) -> int:
 	var height := mini(2 * reach + 1, rows)
 	for y in range(-reach, -reach + height):
 		for x in range(-reach, -reach + width):
-			var sx := _wrap(at.x + x, columns)
-			var sy := _wrap(at.y + y, rows)
+			var sx := posmod(at.x + x, columns)
+			var sy := posmod(at.y + y, rows)
 			var i := sy * columns + sx
 			if _material(i) == 0 or _hp[i] <= 0 \
 					or (TileDefs.damage_masks[_material(i)] & TileDefs.DamageMask.EXPLOSION) == 0:
@@ -412,10 +389,7 @@ func _lay_shapes(rects: Array) -> void:
 func _submit(chunk: Chunk, signature: PackedByteArray, rects: Array) -> void:
 	var body := chunk.body
 	if not body.is_valid():
-		body = PhysicsServer2D.body_create()
-		PhysicsServer2D.body_set_mode(body, PhysicsServer2D.BODY_MODE_STATIC)
-		PhysicsServer2D.body_set_collision_layer(body, 1)
-		PhysicsServer2D.body_set_collision_mask(body, 0)
+		body = CollisionWorld.create_body(CombatProfiles.Layer.TERRAIN, 0)
 		PhysicsServer2D.body_set_space(body, physics.world.space)
 		chunk.body = body
 	_lay_shapes(rects)
@@ -431,16 +405,6 @@ func _submit(chunk: Chunk, signature: PackedByteArray, rects: Array) -> void:
 	# 提交一次变换以刷新物理服务器，让紧接着的查询就能使用更新后的形状。
 	PhysicsServer2D.body_set_state(body, PhysicsServer2D.BODY_STATE_TRANSFORM, Transform2D.IDENTITY)
 	chunk.signature = signature
-
-# 读取指定地形区域的形状中心点，让测试能验证地图边缘两侧的碰撞位置。
-func body_shapes(key: int) -> PackedVector2Array:
-	var out := PackedVector2Array()
-	var body := _chunks[key].body
-	if not body.is_valid():
-		return out
-	for i in PhysicsServer2D.body_get_shape_count(body):
-		out.append(PhysicsServer2D.body_get_shape_transform(body, i).origin)
-	return out
 
 func _chunk_area(key: int) -> Rect2i:
 	var span := CHUNK_CELLS

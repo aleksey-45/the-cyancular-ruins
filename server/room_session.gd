@@ -4,15 +4,14 @@ extends Node
 const GRACE_SECONDS := 60.0
 const LanBeaconScript := preload("res://core/net/lan_beacon.gd")
 var code := ""
-var mode := PvpSession.MODE_PVP
-var options: Dictionary = {}
+var mode := WorldSpec.DUEL
+var options := RoomOptions.normalized(WorldSpec.DUEL, {})
 var seats: Dictionary = {}
-var guests: Dictionary = {}
+var _match_info := {}
 var host_role := 1
-var session: MatchSession
+var session: MatchHost
 var world: MatchWorld:
 	get: return session.world if session != null else null
-var _map_bytes: PackedByteArray
 var _published_terrain := 0
 var _returned: Dictionary = {}
 var _beacon: LanBeaconScript
@@ -26,16 +25,14 @@ func _ready() -> void:
 		push_error("服务器绑定失败: %d" % error)
 		get_tree().quit(1)
 		return
-	NetBus.manual_poll = true
 	NetBus.event_received.connect(_on_event)
 	NetBus.input_received.connect(_on_input)
 	NetBus.peer_left.connect(_on_left)
 	print("SERVER READY port=%d" % NetBus.server_port)
 
 func _physics_process(_delta: float) -> void:
-	NetBus.poll_messages()
 	_expire_seats()
-	if world == null or world.rules.phase == MatchRules.Phase.MATCH_OVER:
+	if world == null or world.finished:
 		return
 	var started := PerformanceStats.begin()
 	var previous := world.rules.phase
@@ -53,47 +50,37 @@ func _physics_process(_delta: float) -> void:
 		_published_terrain = terrain.version
 		terrain.forget_before(_published_terrain)
 	if new_round:
-		send_baselines()
+		send_baselines(0, NetEvent.Kind.ROUND)
 	elif world.tick % 2 == 0 or not world.combat.hits.is_empty() or phase != previous:
 		_send_state(phase == MatchRules.Phase.MATCH_OVER)
 	PerformanceStats.end(PerformanceStats.SERVER_TICK, started)
 
 func _on_event(peer: int, kind: int, data: Variant) -> void:
 	match kind:
-		NetEvent.Kind.HELLO:
-			guests[peer] = data
 		NetEvent.Kind.CREATE:
 			if not code.is_empty():
 				message(peer, "本进程已有房间")
 				return
-			if not guests.has(peer):
-				message(peer, "请先提交玩家资料")
-				return
 			mode = data["mode"]
 			options = RoomOptions.normalized(mode, data["options"])
 			code = "%08d" % (randi() % 100000000)
-			add_seat(peer)
+			add_seat(peer, data)
 			_start_beacon()
 			broadcast_room()
-		NetEvent.Kind.LIST:
-			var entry := room_data() if not code.is_empty() and options.get("beta", false) == data else {}
-			NetBus.send_event(NetEvent.Kind.ROOM_LIST, entry, peer)
 		NetEvent.Kind.JOIN:
 			var role := role_of(peer)
 			if data["code"] != code or code.is_empty():
 				message(peer, "房间不存在")
-			elif options.get("beta", false) != data["beta"]:
-				var beta: bool = options.get("beta", false)
+			elif options["beta"] != data["beta"]:
+				var beta: bool = options["beta"]
 				message(peer, "该房间为「%s」，请从「%s」进入" % [
 						PvpSession.mode_name(mode, beta), "Beta" if beta else "多人模式"])
 			elif role != 0:
 				broadcast_room(role)
 			elif world != null or seats.size() >= max_players():
 				message(peer, "房间已满")
-			elif not guests.has(peer):
-				message(peer, "请先提交玩家资料")
 			else:
-				add_seat(peer)
+				add_seat(peer, data)
 				broadcast_room()
 		NetEvent.Kind.PICK_TEAM:
 			var role := role_of(peer)
@@ -120,7 +107,7 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			var role := role_of(peer)
 			if not seats.has(role):
 				return
-			if world != null and world.rules.phase == MatchRules.Phase.MATCH_OVER:
+			if world != null and world.finished:
 				_returned[role] = true
 				if _returned.size() == online_count():
 					return_to_room()
@@ -140,16 +127,15 @@ func max_players() -> int:
 	return RoomOptions.capacity(mode, options)
 
 func map_path() -> String:
-	return str(options.get("map", "res://maps/newfactory.cyrm"))
+	return str(options["map"])
 
 # 团队模式将新玩家分到人数较少的一队。人数相同时优先选尚有空位的 A 队。
-func add_seat(peer: int) -> void:
+func add_seat(peer: int, guest: Dictionary) -> void:
 	var role := 1
 	while seats.has(role):
 		role += 1
-	var guest: Dictionary = guests[peer]
 	var team := 0
-	if mode == PvpSession.MODE_TEAM:
+	if mode == WorldSpec.TEAM:
 		var a := team_count(1)
 		var b := team_count(2)
 		team = 1 if a <= b and a < TeamRules.MAX_TEAM else 2
@@ -191,9 +177,9 @@ func room_data() -> Dictionary:
 	for role in seats:
 		roster.append({"role": role, "name": seats[role]["name"], "team": seats[role]["team"]})
 	return {"code": code, "mode": mode, "map": map_path(), "players": roster,
-			"max_players": max_players(), "match_time": options.get("match_time", RoomOptions.MATCH_SECONDS),
-			"host_role": host_role, "in_match": world != null, "beta": options.get("beta", false),
-			"player_collision": options.get("player_collision", false),
+			"max_players": max_players(), "match_time": options["match_time"],
+			"host_role": host_role, "in_match": world != null, "beta": options["beta"],
+			"player_collision": options["player_collision"],
 			"can_start": world == null and _start_problem().is_empty()}
 
 func broadcast_room(only_role: int = 0) -> void:
@@ -207,7 +193,7 @@ func broadcast_room(only_role: int = 0) -> void:
 # 建房成功后按房间选项 lan_public 决定是否启动局域网广播。
 func _start_beacon() -> void:
 	_stop_beacon()
-	if not bool(options.get("lan_public", true)):
+	if not options["lan_public"]:
 		return
 	_beacon = LanBeaconScript.new()
 	_beacon.start(_lan_info)
@@ -221,21 +207,18 @@ func _stop_beacon() -> void:
 
 # 广播包中的 port 是游戏服务器的监听端口。等待玩家加入时也会广播。
 func _lan_info() -> Dictionary:
-	var data := room_data()
-	return {"code": data["code"], "mode": data["mode"], "players": data["players"].size(),
-			"max": data["max_players"], "in_match": data["in_match"],
-			"beta": data["beta"], "port": NetBus.server_port}
+	return {"code": code, "mode": mode, "players": seats.size(), "max": max_players(),
+		"in_match": world != null, "beta": options["beta"], "port": NetBus.server_port}
 
 
 func _exit_tree() -> void:
 	_stop_beacon()
 	_close_match()
-	NetBus.manual_poll = false
 
 
 ## 团队对抗要求所有房间成员均已连接，且两队各有至少一名玩家、都没有超过每队上限。
 func team_ready() -> bool:
-	if mode != PvpSession.MODE_TEAM:
+	if mode != WorldSpec.TEAM:
 		return false
 	for role in seats:
 		if seats[role]["peer"] == 0:
@@ -243,11 +226,11 @@ func team_ready() -> bool:
 	return not TeamRules.team_counts(_seat_teams()).is_empty()
 
 func _start_problem() -> String:
-	if mode == PvpSession.MODE_TEAM:
+	if mode == WorldSpec.TEAM:
 		return "" if team_ready() else "A 队 %d 人、B 队 %d 人，每队 1~%d 人且全部在线才能开始" % [
 				team_count(1), team_count(2), TeamRules.MAX_TEAM]
 	var online := online_count()
-	if mode == PvpSession.MODE_PVP and online != max_players():
+	if mode == WorldSpec.DUEL and online != max_players():
 		return "1v1 需要两名在线玩家"
 	if online < RoomOptions.MIN_PLAYERS:
 		return "至少需要 %d 名在线玩家" % RoomOptions.MIN_PLAYERS
@@ -256,29 +239,33 @@ func _start_problem() -> String:
 	return ""
 
 func start_match() -> void:
-	var teams := _seat_teams() if mode == PvpSession.MODE_TEAM else {}
+	var teams := _seat_teams() if mode == WorldSpec.TEAM else {}
 	var paths: Array[String] = [map_path()]
 	if map_path().is_empty():
 		paths = MapCatalog.shuffled_paths()
 	var problem := "没有可用的联机地图"
-	if WeaponRegistry.enabled_ids(options.get("disabled_weapons", [])).is_empty():
-		message(int(seats[host_role]["peer"]), "请至少启用一种武器")
-		return
 	var seed := randi()
 	for path in paths:
-		_map_bytes = CyrmMap.read_bytes(path)
-		var map := CyrmMap.from_bytes(_map_bytes)
+		var bytes := CyrmMap.read_bytes(path)
+		var map := CyrmMap.from_bytes(bytes)
 		if map.is_empty():
 			problem = "无法读取地图 %s" % path
 			continue
-		var spec := WorldSpec.new(map, mode, seats.keys(), teams, options, seed)
-		var candidate := MatchSession.open_local(spec)
-		if candidate.world.problem.is_empty():
-			session = candidate
+		var spec := WorldSpec.arena(map, mode, seats.keys(), teams, options, seed)
+		problem = spec.problem()
+		if problem.is_empty():
+			session = MatchHost.new(spec)
+			var names := {}
+			var hues := {}
+			for role: int in seats:
+				names[role] = seats[role]["name"]
+				hues[role] = seats[role]["hue"]
+			_match_info = {"code": code, "mode": mode, "options": options, "names": names, "hues": hues,
+				"teams": spec.teams, "map": bytes, "roles": spec.roles, "seed": spec.seed}
 			_published_terrain = world.terrain.version
 			send_baselines()
 			return
-		problem = "地图 %s：%s" % [path, candidate.world.problem]
+		problem = "地图 %s：%s" % [path, problem]
 	message(int(seats[host_role]["peer"]), problem)
 
 func _send_state(final: bool) -> void:
@@ -295,7 +282,7 @@ func _send_state(final: bool) -> void:
 			if final:
 				final_peers.append(seat["peer"])
 			else:
-				NetBus.send_state(seat["peer"], session.feedback(role), batch)
+				NetBus.send_state(seat["peer"], session.remote[role].feedback, batch)
 	if not final_peers.is_empty():
 		NetBus.send_final_state(final_peers, batch)
 	if batch != null:
@@ -308,23 +295,18 @@ func _broadcast(kind: int, data: Variant, except_role := 0) -> void:
 			peers.append(seats[role]["peer"])
 	NetBus.broadcast_event(kind, data, peers)
 
-func send_baselines(only_role := 0) -> void:
-	var names := {}
-	var hues := {}
-	for r in seats:
-		names[r] = seats[r]["name"]
-		hues[r] = seats[r]["hue"]
-	var common := {"code": code, "mode": mode, "options": options, "names": names, "hues": hues,
-		"teams": world.spec.teams, "map": _map_bytes,
-		"roles": world.spec.roles, "seed": world.spec.seed, "sub_hp": world.terrain.get_modified()}
+func send_baselines(only_role := 0, kind := NetEvent.Kind.BASELINE) -> void:
+	var common := _match_info.duplicate() if kind == NetEvent.Kind.BASELINE else {}
+	common["sub_hp"] = world.terrain.get_modified()
 	var frame := session.packet(_grace())
+	var batch := NetCodec.StateBatch.new(frame)
 	var targets := seats.keys() if only_role == 0 else [only_role]
 	for role in targets:
 		var seat: Dictionary = seats[role]
 		if seat["peer"] != 0:
 			seat["ready"] = false
-			var payload := common.merged({"role": role, "frame": frame.merged({"input_feedback": session.feedback(role)}, true)})
-			NetBus.send_event(NetEvent.Kind.BASELINE, payload, seat["peer"])
+			var payload := common.merged({"role": role, "frame": frame.merged({"input_feedback": session.remote[role].feedback}, true)})
+			NetBus.send_event(kind, payload, seat["peer"], batch)
 
 func _on_input(peer: int, packet: Array, received_us: int) -> void:
 	var role := role_of(peer)
@@ -332,7 +314,6 @@ func _on_input(peer: int, packet: Array, received_us: int) -> void:
 		session.accept_input(role, packet, received_us)
 
 func _on_left(peer: int) -> void:
-	guests.erase(peer)
 	var role := role_of(peer)
 	if not seats.has(role):
 		return
@@ -343,8 +324,8 @@ func _on_left(peer: int) -> void:
 	if world == null:
 		broadcast_room.call_deferred()
 		return
-	session.reset_input(role, false)
-	if world.rules.phase == MatchRules.Phase.MATCH_OVER and _returned.size() == online_count():
+	session.remote[role].reset(session.remote[role].epoch)
+	if world.finished and _returned.size() == online_count():
 		return_to_room()
 
 func rejoin(peer: int, target_code: String, token: String) -> void:
@@ -354,7 +335,7 @@ func rejoin(peer: int, target_code: String, token: String) -> void:
 			seats[role]["peer"] = peer
 			seats[role]["deadline"] = 0.0
 			if world != null:
-				session.reset_input(role, true)
+				session.remote[role].reset(session.remote[role].epoch + 1)
 				send_baselines(role)
 			else:
 				broadcast_room()
@@ -397,8 +378,9 @@ func return_to_room() -> void:
 
 func _close_match() -> void:
 	if session != null:
-		session.close()
+		world.close()
 		session = null
+		_match_info.clear()
 
 func _expire_seats() -> void:
 	var now := Time.get_ticks_msec() / 1000.0

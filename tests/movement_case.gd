@@ -18,7 +18,7 @@ func _water(tree: SceneTree) -> void:
 	var actor := player(parent)
 	var step_at := func(y: float, delta: float) -> Array:
 		_place(actor, Vector2(160.0, y))
-		return ActorStep.step(actor, NEUTRAL_INPUT, delta)
+		return step_actions(actor, NEUTRAL_INPUT, delta)
 	var bank := 256.0 - (actor.collision_rect().end.y - actor.position.y)
 	step_at.call(bank + 7.0, ActorStep.DT)
 	expect(not actor.in_water, "shallow contact alone does not start swimming")
@@ -180,7 +180,7 @@ func _step_overhang(tree: SceneTree) -> void:
 	var parent := world_from_solid(tree, 16, 8, func(sx: int, sy: int) -> bool:
 		return sy >= 24 or sx < 12 and (sy >= 23 or sy == 15))
 	var mover := player(parent)
-	_place(mover, Vector2(_terrain.map_size.x - 36.5, 326.999))
+	_place(mover, Vector2(parent.terrain.map_size.x - 36.5, 326.999))
 	mover.velocity.x = CFG.move_speed
 	mover._grounded = true
 	var x := mover.position.x
@@ -233,5 +233,3 @@ func _step_slope(tree: SceneTree) -> void:
 	var pose: Transform2D = PhysicsServer2D.body_get_state(mover.rid, PhysicsServer2D.BODY_STATE_TRANSFORM)
 	expect(pose.origin.is_equal_approx(mover.position), "the blocked actor and RID stay in sync")
 	cleanup()
-
-## 该测试覆盖胜队内部的 MVP 评选、同分时的顺序以及平局不评 MVP 的规则。

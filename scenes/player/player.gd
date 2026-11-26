@@ -38,7 +38,6 @@ var shot_serial := 0
 var last_shot_type := 0
 var state := 0
 var waterproof := CFG.player_waterproof_max
-var max_waterproof := CFG.player_waterproof_max
 var sim_hp := CFG.player_max_hp
 var sim_max_hp := CFG.player_max_hp
 var personal_haste_mult := 1.0
@@ -257,40 +256,35 @@ func update_swim(delta: float, mult: Vector2) -> void:
 	velocity.y = (CFG.player_swim_up if (step_input.held & ActorInput.BIT_UP) != 0 else CFG.player_swim_down) * tm
 
 func over_climb_tile() -> bool:
-	if terrain.empty():
-		return false
-	return terrain.climb_speed(terrain.material_at(
-			terrain.cell(position + Vector2(0, CFG.climb_foot_offset)))) > 0.0 \
-		or terrain.climb_speed(terrain.material_at(terrain.cell(position))) > 0.0
+	return TileDefs.climb[terrain.material_at(
+			terrain.cell(position + Vector2(0, CFG.climb_foot_offset)))] > 0.0 \
+		or TileDefs.climb[terrain.material_at(terrain.cell(position))] > 0.0
 
 func ladder_top(foot: Vector2i) -> bool:
 	var below := terrain.material_at(foot + Vector2i(0, 1))
-	return below != 0 and terrain.climb_speed(below) > 0.0
+	return TileDefs.climb[below] > 0.0
 
-func update_climb(delta: float, mult: Vector2) -> void:
+func update_climb(mult: Vector2) -> void:
 	if not climb_latched and (step_input.pressed & ActorInput.BIT_UP) == 0:
 		return
-	if terrain.empty() or is_squat:
+	if is_squat:
 		climb_latched = false
 		return
 	var foot := terrain.cell(position + Vector2(0, CFG.climb_foot_offset))
-	var fv := terrain.material_at(foot)
-	var cv := terrain.material_at(terrain.cell(position))
-	var ft := fv
-	var fs := terrain.climb_speed(ft)
-	var cs := terrain.climb_speed(cv)
-	var foot_channel := fv != 0 and fs > 0.0
-	var center_channel := cv != 0 and cs > 0.0
-	if not climb_latched and (center_channel or foot_channel) and (step_input.pressed & ActorInput.BIT_UP) != 0:
+	var foot_material := terrain.material_at(foot)
+	var foot_speed := TileDefs.climb[foot_material]
+	var center_speed := TileDefs.climb[terrain.material_at(terrain.cell(position))]
+	var on_ladder := foot_speed > 0.0 or center_speed > 0.0
+	if on_ladder:
 		climb_latched = true
-	if climb_latched and not center_channel and not foot_channel and not ladder_top(foot):
+	if climb_latched and not on_ladder and not ladder_top(foot):
 		climb_latched = false
 	if not climb_latched:
 		return
 	var tm := _speed_mult
 	if step_input.vertical_axis < 0.0:
-		if foot_channel or not ladder_top(foot):
-			var speed := CFG.climb_speed * maxf(fs, cs) * CFG.climb_vertical_mult * mult.y * tm
+		if foot_speed > 0.0 or not ladder_top(foot):
+			var speed := CFG.climb_speed * maxf(foot_speed, center_speed) * CFG.climb_vertical_mult * mult.y * tm
 			velocity.y = step_input.vertical_axis * speed
 			return
 		if (step_input.pressed & ActorInput.BIT_UP) != 0:
@@ -301,7 +295,7 @@ func update_climb(delta: float, mult: Vector2) -> void:
 		velocity.y = 0.0
 		return
 	if step_input.vertical_axis > 0.0:
-		var descent := terrain.descent_speed(ft)
+		var descent := TileDefs.descent[foot_material]
 		if descent <= 0.0:
 			climb_latched = false
 			return
@@ -323,10 +317,10 @@ func update_waterproof(delta: float, submerged: bool) -> void:
 	_waterproof_timer += delta
 	if _waterproof_timer >= (WCFG.water_drain_interval if submerged else WCFG.water_recover_interval):
 		_waterproof_timer = 0.0
-		waterproof = maxi(waterproof - 1, 0) if submerged else mini(waterproof + 1, max_waterproof)
+		waterproof = maxi(waterproof - 1, 0) if submerged else mini(waterproof + 1, CFG.player_waterproof_max)
 
-func update_vertical(delta: float, latched: bool, mult: Vector2) -> void:
-	if latched or in_water:
+func update_vertical(delta: float, mult: Vector2) -> void:
+	if climb_latched or in_water:
 		return
 	if _grounded:
 		coyote_timer = CFG.coyote_time
@@ -441,9 +435,8 @@ func _simulate_motion(delta: float, mult: Vector2, time_mult: float) -> void:
 			is_squat = false
 			sync_collision_geometry()
 	else:
-		update_climb(delta, mult)
-	var latched := not in_water and climb_latched
-	update_vertical(delta, latched, mult)
+		update_climb(mult)
+	update_vertical(delta, mult)
 	update_crouch_dash()
 	update_horizontal(delta, mult)
 	update_facing()
@@ -490,21 +483,21 @@ func force_down() -> bool:
 		equipped.cancel_aim()
 	return true
 
-func simulate_hit(source: Vector2, damage: int, force: float) -> bool:
+func simulate_hit(source: Vector2, damage: int, force: float) -> void:
 	if force != 0.0:
 		apply_impulse(source, force)
-	return apply_hit_health(sim_hp - damage)
+	apply_hit_health(sim_hp - damage)
 
-func apply_hit_health(hp: int) -> bool:
+func apply_hit_health(hp: int) -> void:
 	cancel_charge()
 	sim_hp = hp
 	sim_iframes = CFG.iframes_time
-	return sim_hp <= 0 and force_down()
+	if sim_hp <= 0: force_down()
 
-func apply_authoritative_state(hp: int, wp: int, down: bool) -> void:
-	sim_hp = hp
-	waterproof = wp
-	sim_downed = down
+func heal() -> void:
+	sim_hp = sim_max_hp
+	waterproof = CFG.player_waterproof_max
+	sim_downed = false
 	sync_collision_geometry()
 
 ## 返回供同步和回溯使用的角色快照，其中包含手持武器状态。
@@ -515,10 +508,7 @@ func capture_state() -> Array:
 		values[slot] = get(PlayerStateSchema.PROPERTIES[slot])
 	values[PlayerStateSchema.AIM] = step_input.aim
 	values[PlayerStateSchema.SHOT_TYPE] = last_shot_type
-	values[PlayerStateSchema.WEAPON_NEXT] = weapons._next_inst
-	values[PlayerStateSchema.WEAPON_INST] = weapons.current_inst()
-	values[PlayerStateSchema.INVENTORY] = weapons.snapshot()
-	values[PlayerStateSchema.EQUIPMENT] = equipped.state_values() if equipped != null else []
+	weapons.capture_into(values)
 	return values
 
 func restore_state(values: Array) -> void:
@@ -526,28 +516,24 @@ func restore_state(values: Array) -> void:
 		set(PlayerStateSchema.PROPERTIES[slot], values[slot])
 	step_input.aim = values[PlayerStateSchema.AIM]
 	last_shot_type = values[PlayerStateSchema.SHOT_TYPE]
-	weapons._next_inst = values[PlayerStateSchema.WEAPON_NEXT]
 	sync_collision_geometry()
-	weapons.restore(values[PlayerStateSchema.WEAPON_INST], values[PlayerStateSchema.INVENTORY],
-			values[PlayerStateSchema.EQUIPMENT], false)
+	weapons.restore(values, false)
 
 func rewind_state(values: Array, keep_oxygen: bool) -> void:
 	var oxygen := waterproof
-	for slot in PlayerStateSchema.REWIND:
-		if slot != PlayerStateSchema.SHOT_SERIAL:
-			set(PlayerStateSchema.PROPERTIES[slot], values[slot])
+	for slot in PlayerStateSchema.REWIND_FIELDS:
+		set(PlayerStateSchema.PROPERTIES[slot], values[slot])
 	if keep_oxygen:
 		sim_hp = clampi(sim_hp, 0, sim_max_hp)
 		waterproof = oxygen
 	sync_collision_geometry()
-	weapons.restore(values[PlayerStateSchema.WEAPON_INST], values[PlayerStateSchema.INVENTORY],
-			values[PlayerStateSchema.EQUIPMENT], true)
+	weapons.restore(values, true)
 
 func spawn_at(spawn_cell: Vector2i, heal := true) -> void:
 	life += 1
 	position = CyrmMap.world_position(spawn_cell)
 	reset_motion()
 	if heal:
-		apply_authoritative_state(sim_max_hp, max_waterproof, false)
+		heal()
 	else:
 		sync_collision_geometry()

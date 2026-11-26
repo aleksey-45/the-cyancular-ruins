@@ -17,6 +17,7 @@ class LobbySession extends RoomSession:
 func run(tree: SceneTree) -> void:
 	_input()
 	_input_schedule()
+	_seat_paths()
 	_clock_steps()
 	_lobby()
 	_room_admission()
@@ -77,7 +78,7 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP | ActorInput.BIT_CHARGE_RIGHT, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c727000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
+	var protocol_bytes := ("c729000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
 			+ "0d00000002000000000000f03f0e0000000157000000010c000000640000002002080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT encodes packet-local phase deltas and a self-contained action tick")
 	var stream := _body(wire, NetCodec.INPUT)
@@ -93,7 +94,7 @@ func _input() -> void:
 		expect(codec.decode_input(truncated).is_empty() and not truncated.valid and codec.state_ack == 123,
 				"partial INPUT does not commit its snapshot ACK")
 	var missing_target := wire.duplicate()
-	missing_target[14] &= ~1 # 第一个样本的增量掩码必须含完整偏移。
+	missing_target[14] &= ~1 # 清除首条输入的偏移位，构造缺少目标帧偏移的编码。
 	var invalid := NetCodec.Reader.new(missing_target, 1)
 	expect(codec.decode_input(invalid).is_empty() and not invalid.valid and codec.state_ack == 123,
 			"an incomplete first sample cannot decode a target or advance the ACK")
@@ -102,36 +103,97 @@ func _input() -> void:
 	stream = _body(wire, NetCodec.EVENT + NetEvent.Kind.START)
 	expect(codec.decode_event(NetEvent.Kind.START, stream) == null and stream.remaining() == 0, "START round trip")
 
+func _seat_paths() -> void:
+	var map := CyrmMap.load_file("res://maps/newfactory.cyrm")
+	var level := WorldSpec.solo(map, SpawnPicker.single_spawn(map), [WeaponType.RIFLE], 712)
+	var regular := WorldSpec.arena(map, WorldSpec.ROYALE, [1, 2], {}, RoomOptions.normalized(WorldSpec.ROYALE, {}), 712)
+	var beta := WorldSpec.arena(map, WorldSpec.ROYALE, [1, 2], {}, RoomOptions.normalized(WorldSpec.ROYALE, {"beta": true}), 712)
+	for spec: WorldSpec in [level, regular, beta]:
+		var local := MatchHost.new(spec, 1)
+		var server := MatchHost.new(spec)
+		var encoder := NetCodec.new()
+		var decoder := NetCodec.new()
+		expect(not local.remote.has(1) and local.remote.size() + 1 == server.remote.size(), "only remote seats own input queues")
+		if spec != level:
+			local.enqueue(MatchWorld.Command.START)
+			server.enqueue(MatchWorld.Command.START)
+		for at in range(1, 35):
+			if at == 2 and spec != level:
+				local.world.rules.round_timer = ActorStep.DT
+				server.world.rules.round_timer = ActorStep.DT
+			if at == 34:
+				var command := MatchWorld.Command.RESTART if spec == level else MatchWorld.Command.LEAVE
+				local.enqueue(command, spec.roles.back())
+				server.enqueue(command, spec.roles.back())
+			var held := ActorInput.BIT_REWIND if at >= 20 and at <= 24 else 0
+			var fire := ActorInput.BIT_ATTACK if at == 7 else 0
+			var release := ActorInput.BIT_ATTACK if at == 8 else 0
+			var local_input := [1.0, held | fire, fire, release, 0, Vector2.RIGHT]
+			for id: int in spec.roles:
+				var record := local_input if id == 1 else ActorInput.neutral(Vector2.LEFT)
+				var epoch := server.remote[id].epoch
+				var frames := [[at, epoch, at, record[ActorInput.AX], record[ActorInput.HELD], record[ActorInput.AIM]]]
+				var edges := [[at, epoch, at, fire, release, 0, Vector2.RIGHT]] if id == 1 and (fire | release) else []
+				var wire := encoder.encode_input([frames, edges])
+				var packet := decoder.decode_input(NetCodec.Reader.new(wire, 1))
+				server.accept_input(id, packet, -1)
+				if id != 1: local.accept_input(id, packet, -1)
+			var inputs := {1: local_input}
+			local.fixed_step(inputs)
+			server.fixed_step()
+			if at == 25 or at == 34:
+				expect(inputs == {1: local_input}, "rewind release and departure preserve submitted records for replay")
+			expect(local.world.capture() == server.world.capture()
+					and local.world.terrain.get_modified() == server.world.terrain.get_modified(),
+					"direct and scheduled input produce identical %s/%s worlds at tick %d" % [spec.mode, spec.time_scope, at])
+			if at == 26:
+				var state := local.packet({})
+				var wire := encoder.encode_state(PackedByteArray(), NetCodec.StateBatch.new(state))
+				expect(decoder.decode_state(NetCodec.Reader.new(wire, 1)) == state, "STATE preserves the full active rules and time history")
+		if spec == level:
+			expect(local.world.players.size() == 1 and not local.world.world_time.history.can_rewind(), "a level restart resets its world history")
+		else:
+			expect(local.world.finished and local.remote.is_empty() and server.remote.size() == 1, "leaving a single survivor ends the same arena")
+		local.world.close()
+		server.world.close()
+
+	level.time_scope = WorldSpec.TimeScope.NONE
+	var plain := MatchWorld.new(level)
+	var enemies := plain.combat.enemies.size()
+	plain.advance({1: ActorInput.neutral()})
+	plain.advance({1: ActorInput.neutral()}, [[MatchWorld.Command.RESTART, 0]])
+	expect(plain.time == null and plain.rules == null and plain.players[1].life == 2 and plain.combat.enemies.size() == enemies,
+			"the same level spawns and restarts independently of its time ability")
+	plain.close()
+
 func _input_schedule() -> void:
 	var scheduler := InputScheduler.new()
-	var buffer := InputBuffer.new()
 	var row := [1, 1, 105, 1.0, 0, Vector2.RIGHT]
 	var edge := [1, 1, 105, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]
-	expect(scheduler.submit(buffer, [[row], [edge]], 100), "the authority accepts a valid client commitment")
+	expect(scheduler.submit([[row], [edge]], 100), "the authority accepts a valid client commitment")
 	var conflict := row.duplicate()
 	conflict[InputBuffer.TARGET_TICK] = 102
-	scheduler.submit(buffer, [[conflict], [edge]], 101)
-	expect(buffer.take(104)[ActorInput.AX] == 0.0, "a conflicting repeat cannot move a queued sample forward")
-	var input := buffer.take(105)
+	scheduler.submit([[conflict], [edge]], 101)
+	expect(scheduler.take(104)[ActorInput.AX] == 0.0, "a conflicting repeat cannot move a queued sample forward")
+	var input := scheduler.take(105)
 	expect(input[ActorInput.AX] == 1.0 and input[ActorInput.PRESSED] == ActorInput.BIT_UP
-			and buffer.take(106)[ActorInput.PRESSED] == 0, "early input and duplicate edge execute once at P")
+			and scheduler.take(106)[ActorInput.PRESSED] == 0, "early input and duplicate edge execute once at P")
 	edge = [2, 1, 105, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]
-	scheduler.submit(buffer, [[], [edge]], 106)
-	expect(buffer.take(107)[ActorInput.PRESSED] == ActorInput.BIT_DROP and edge[InputBuffer.TARGET_TICK] == 105,
+	scheduler.submit([[], [edge]], 106)
+	expect(scheduler.take(107)[ActorInput.PRESSED] == ActorInput.BIT_DROP and edge[InputBuffer.TARGET_TICK] == 105,
 			"late input executes at availability and keeps its original age")
-	expect(not scheduler.submit(buffer, [[[3, 1, 107, 0.0, 0, Vector2.RIGHT]], []], 200),
+	expect(not scheduler.submit([[[3, 1, 107, 0.0, 0, Vector2.RIGHT]], []], 200),
 			"a stalled input clock requests a fresh epoch")
-	buffer.reset(2)
-	scheduler = InputScheduler.new()
-	scheduler.submit(buffer, [[row], [edge]], 200)
+	scheduler.reset(2)
+	scheduler.submit([[row], [edge]], 200)
 	expect(scheduler.feedback.is_empty(), "old epoch input cannot seed a new controller")
 	for seq in range(1, 241):
 		var target := seq + 200
 		var at := target - 1 + int(seq > 140) * 3
 		row = [seq, 2, target, 1.0, 0, Vector2.RIGHT]
-		scheduler.submit(buffer, [[row], []], at)
-		scheduler.submit(buffer, [[row], []], at + 1)
-		buffer.take(at + 1)
+		scheduler.submit([[row], []], at)
+		scheduler.submit([[row], []], at + 1)
+		scheduler.take(at + 1)
 	var clock := InputClock.new()
 	var neutral := [0.0, 0, 0, 0, 0, Vector2.RIGHT]
 	clock.reset(440, 240, 0, scheduler.feedback)
@@ -149,7 +211,7 @@ func _input_schedule() -> void:
 	feedback = PackedByteArray([251])
 	expect(_state(receiver, sender.encode_state(feedback, NetCodec.StateBatch.new(frame)))["input_feedback"] == feedback,
 			"STATE relays opaque scheduling feedback even across a lost report")
-	host.close()
+	host.world.close()
 
 	clock.reset(98, 0, 0, PackedByteArray())
 	var previous := 100
@@ -218,10 +280,10 @@ func _clock_steps() -> void:
 
 func _lobby() -> void:
 	var codec := NetCodec.new()
-	var join := {"code": "00048213", "beta": true}
+	var join := {"code": "00048213", "beta": true, "name": "player", "hue": 0.25}
 	var wire := codec.encode_event(NetEvent.Kind.JOIN, join)
 	var stream := _body(wire, NetCodec.EVENT + NetEvent.Kind.JOIN)
-	expect(wire.size() == 6 and codec.decode_event(NetEvent.Kind.JOIN, stream) == join,
+	expect(codec.decode_event(NetEvent.Kind.JOIN, stream) == join,
 			"JOIN preserves leading-zero room code and gameplay selection")
 	expect(stream.remaining() == 0, "JOIN consumes its complete payload")
 	var rules := TimeRules.normalized({"initial": 1200.25, "cap": 100.0, "regen": NAN,
@@ -232,14 +294,16 @@ func _lobby() -> void:
 	var options := {"map": "res://maps/newfactory.cyrm", "max_players": 8, "match_time": 300,
 			"round_full_heal": false, "disabled_weapons": WeaponRegistry.enabled_ids().slice(0, 1),
 			"beta": true, "time": rules, "player_collision": true}
-	var create := {"mode": PvpSession.MODE_ROYALE, "options": options}
-	stream = _body(codec.encode_event(NetEvent.Kind.CREATE, create), NetCodec.EVENT + NetEvent.Kind.CREATE)
-	expect(codec.decode_event(NetEvent.Kind.CREATE, stream) == create and stream.remaining() == 0,
-			"CREATE round trip preserves room options")
+	var create := {"mode": WorldSpec.ROYALE, "options": options, "name": "host", "hue": 0.5}
+	for public_room in [false, true]:
+		options["lan_public"] = public_room
+		stream = _body(codec.encode_event(NetEvent.Kind.CREATE, create), NetCodec.EVENT + NetEvent.Kind.CREATE)
+		expect(codec.decode_event(NetEvent.Kind.CREATE, stream) == create and stream.remaining() == 0,
+				"CREATE preserves room options and LAN visibility")
 	var session := LobbySession.new()
 	session.code = join["code"]
-	session.mode = PvpSession.MODE_ROYALE
-	session.options = options
+	session.mode = WorldSpec.ROYALE
+	session.options = RoomOptions.normalized(session.mode, options)
 	session.seats = {1: {"name": "host", "team": 0, "peer": 1}, 2: {"name": "guest", "team": 0, "peer": 2}}
 	var room := session.room_data()
 	room.merge({"your_role": 2, "token": "01".repeat(16)})
@@ -250,21 +314,6 @@ func _lobby() -> void:
 			and decoded["token"] == "01".repeat(16) and decoded["player_collision"],
 			"ROOM preserves roster, options and rejoin credentials")
 	expect(decoded["can_start"], "ROOM carries the server's start decision")
-	expect(decoded["count"] == 2 and decoded["host_name"] == "host"
-			and decoded["team_counts"] == {0: 2, 1: 0, 2: 0},
-			"ROOM derives host and team counts from the roster")
-	var listed := session.room_data()
-	listed["in_match"] = true
-	listed["player_collision"] = false
-	for entry in [{}, listed]:
-		stream = _body(codec.encode_event(NetEvent.Kind.ROOM_LIST, entry), NetCodec.EVENT + NetEvent.Kind.ROOM_LIST)
-		var room_list: Dictionary = codec.decode_event(NetEvent.Kind.ROOM_LIST, stream)
-		expect(stream.remaining() == 0 and room_list.is_empty() == entry.is_empty(),
-				"the room list represents an empty or occupied endpoint")
-		if not entry.is_empty():
-			expect(room_list["players"] == listed["players"] and room_list["in_match"]
-					and room_list["beta"] and not room_list["player_collision"],
-					"ROOM_LIST preserves the room roster and mode")
 	session._on_event(3, NetEvent.Kind.JOIN, join.merged({"beta": false}, true))
 	expect(session.messages.back() == "该房间为「错乱大乱斗」，请从「Beta」进入" and session.seats.size() == 2,
 			"gameplay mismatch names the Beta room and its entry without adding a seat")
@@ -287,19 +336,16 @@ func _tunnel_parsing() -> void:
 func _room_admission() -> void:
 	var session := LobbySession.new()
 	var guest := {"name": "player", "hue": 0.0}
-	var create := {"mode": PvpSession.MODE_PVP, "options": {}}
+	var create := guest.merged({"mode": WorldSpec.DUEL, "options": {}})
+
 	session._on_event(11, NetEvent.Kind.CREATE, create)
-	expect(session.code.is_empty() and session.seats.is_empty(), "CREATE before HELLO leaves the room empty")
-	session._on_event(11, NetEvent.Kind.HELLO, guest)
-	session._on_event(11, NetEvent.Kind.CREATE, create)
-	expect(not session.code.is_empty() and session.role_of(11) == 1, "valid CREATE can be retried after HELLO")
+	expect(not session.code.is_empty() and session.role_of(11) == 1, "CREATE seats the supplied player profile")
 	expect(not session.room_data()["player_collision"], "collision is disabled when CREATE omits the option")
-	var join := {"code": session.code, "beta": false}
+	var join := guest.merged({"code": session.code, "beta": false})
 	session._on_event(11, NetEvent.Kind.JOIN, join)
-	session._on_event(12, NetEvent.Kind.JOIN, join)
 	expect(session.seats.size() == 1 and not session.room_data()["can_start"],
-			"duplicate and unidentified JOIN requests do not reserve a second seat")
-	session._on_event(12, NetEvent.Kind.HELLO, guest)
+			"duplicate JOIN does not reserve a second seat")
+
 	session._on_event(12, NetEvent.Kind.JOIN, join)
 	session.rejoin(11, session.code, session.seats[2]["token"])
 	expect(session.room_data()["can_start"] and session.seats[2]["peer"] == 12,
@@ -309,12 +355,12 @@ func _room_admission() -> void:
 func _royale_capacity() -> void:
 	var session := LobbySession.new()
 	var guest := {"name": "player", "hue": 0.0}
-	session._on_event(1, NetEvent.Kind.HELLO, guest)
-	session._on_event(1, NetEvent.Kind.CREATE, {"mode": PvpSession.MODE_ROYALE,
-			"options": {"map": "res://maps/newfactory.cyrm", "max_players": 16, "player_collision": true}})
-	var join := {"code": session.code, "beta": false}
+
+	session._on_event(1, NetEvent.Kind.CREATE, guest.merged({"mode": WorldSpec.ROYALE,
+			"options": {"map": "res://maps/newfactory.cyrm", "max_players": 16, "player_collision": true}}))
+	var join := guest.merged({"code": session.code, "beta": false})
 	for peer in range(2, 18):
-		session._on_event(peer, NetEvent.Kind.HELLO, guest)
+
 		session._on_event(peer, NetEvent.Kind.JOIN, join)
 	expect(session.seats.size() == 16 and session.role_of(16) == 16 and session.role_of(17) == 0,
 			"Royale admits sixteen players and rejects a seventeenth")
@@ -322,7 +368,7 @@ func _royale_capacity() -> void:
 	for path: String in ["res://maps/demo.cyrm", session.map_path()]:
 		var host := arena(session.mode, roles, {}, session.options, path)
 		var authority := host.world
-		expect(authority.problem.is_empty(), "%s starts a sixteen-player Royale: %s" % [path, authority.problem])
+		expect(authority.spec.problem().is_empty(), "%s starts a sixteen-player Royale: %s" % [path, authority.spec.problem()])
 		var sides := SpawnPicker.respawn_cells(authority.spec.map)
 		var points: Array = sides[1] + sides[2]
 		expect(players_on_map_points(authority, roles, points), "%s assigns sixteen distinct marked points" % path)
@@ -341,7 +387,7 @@ func _royale_capacity() -> void:
 		frame = host.packet({})
 		got = _state(receiver, sender.encode_state(PackedByteArray(), NetCodec.StateBatch.new(frame)))
 		expect(got == frame, "delta state delivers an update for the sixteenth player")
-		host.close()
+		host.world.close()
 	session.free()
 
 func _codec() -> void:
@@ -399,7 +445,23 @@ func _codec() -> void:
 	var wire := sender.encode_event(NetEvent.Kind.BASELINE, baseline)
 	expect(fresh.decode_event(NetEvent.Kind.BASELINE, _body(wire, NetCodec.EVENT + NetEvent.Kind.BASELINE)) == baseline,
 			"a fresh decoder gets an independent logical checkpoint from BASELINE")
-	expect(fresh.history.size() == 1, "BASELINE creates one codec reference")
+	expect(fresh.history.size() == 1 and sender.history.size() == 1, "BASELINE replaces obsolete delta references on both peers")
+	var round_reset := {"frame": rewound, "sub_hp": world.terrain.get_modified()}
+	var next_round := sender.encode_event(NetEvent.Kind.ROUND, round_reset)
+	expect(next_round.size() < wire.size() and fresh.decode_event(NetEvent.Kind.ROUND,
+			_body(next_round, NetCodec.EVENT + NetEvent.Kind.ROUND)) == round_reset,
+			"ROUND carries a fresh checkpoint without resending the map or roster")
+
+	var large := rewound.duplicate(true)
+	var drops: Dictionary = large.checkpoint.pickups
+	var row: Array = drops.values()[0]
+	for id in range(1, 12001): drops[id] = row
+	sender.state_ack = fresh.state_ack
+	var serial := sender.serial
+	var large_wire := sender.encode_state(PackedByteArray(), NetCodec.StateBatch.new(large))
+	expect(large_wire.size() > NetCodec.MAX_UNRELIABLE_STATE and large_wire.decode_u32(5) == 0
+			and sender.waiting_full == serial + 1 and sender.serial == serial + 1
+			and _state(fresh, large_wire) == large, "oversized delta commits exactly one independently decodable reliable state")
 
 	var offset := world.terrain.cell(actor.position)
 	actor.position = world.terrain.cell_center(offset + Vector2i(2, 0))
@@ -408,12 +470,12 @@ func _codec() -> void:
 	var ending := host.packet({})
 	var end_wire := sender.encode_state(PackedByteArray(), NetCodec.StateBatch.new(ending))
 	expect(_state(fresh, end_wire) == ending, "a projectile removal and a pending blast are separate state")
-	host.close()
+	host.world.close()
 
 func _event_records() -> void:
 	var codec := NetCodec.new()
 	var records := {
-		NetEvent.Kind.CREATE: {"mode": WorldSpec.ROYALE, "options": {
+		NetEvent.Kind.CREATE: {"name": "h", "hue": 0.5, "mode": WorldSpec.ROYALE, "options": {
 			"map": "res://maps/newfactory.cyrm", "max_players": 8, "match_time": 300,
 			"round_full_heal": false, "disabled_weapons": [1, 5], "beta": true,
 			"time": TimeRules.normalized({"cap": 1800.25}), "player_collision": false}},
@@ -470,12 +532,11 @@ func _state(codec: NetCodec, wire: PackedByteArray) -> Dictionary:
 ## 覆盖组队房间的加入、换队与开局检查，包括每队人数上限。
 func _team_room() -> void:
 	var session := LobbySession.new()
-	session.mode = PvpSession.MODE_TEAM
-	session.options = {"map": "res://maps/demo.cyrm"}
+	session.mode = WorldSpec.TEAM
+	session.options = RoomOptions.normalized(session.mode, {"map": "res://maps/demo.cyrm"})
 	expect(session.max_players() == 10, "team rooms accept up to 10 players")
 	for i in 10:
-		session.guests[100 + i] = {"name": "p%d" % i, "hue": 0.0}
-		session.add_seat(100 + i)
+		session.add_seat(100 + i, {"name": "p%d" % i, "hue": 0.0})
 	expect(session.team_count(1) == 5 and session.team_count(2) == 5,
 			"new seats balance 5/5 and ties go to team A first")
 	expect(session.team_ready(), "a full 5v5 roster is ready")
@@ -491,8 +552,8 @@ func _team_room() -> void:
 	session.seats[3]["peer"] = 103
 	session.free()
 	var small := LobbySession.new()
-	small.mode = PvpSession.MODE_TEAM
-	small.options = {}
+	small.mode = WorldSpec.TEAM
+	small.options = RoomOptions.normalized(small.mode, {})
 	for role in range(1, 7):
 		small.seats[role] = {"peer": role, "token": "", "name": "p%d" % role, "hue": 0.0,
 				"team": 1 if role <= 5 else 2, "deadline": 0.0}
@@ -506,11 +567,10 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 	var session := LobbySession.new()
 	tree.root.add_child(session)
 	session.code = "12345678"
-	session.mode = PvpSession.MODE_TEAM
+	session.mode = WorldSpec.TEAM
 	session.options = RoomOptions.normalized(session.mode, {"map": "res://maps/demo.cyrm", "beta": beta})
-	session.guests = {11: {"name": "A", "hue": 0.0}, 12: {"name": "B", "hue": 0.5}}
-	session.add_seat(11)
-	session.add_seat(12)
+	session.add_seat(11, {"name": "A", "hue": 0.0})
+	session.add_seat(12, {"name": "B", "hue": 0.5})
 	session.options["disabled_weapons"] = WeaponRegistry.enabled_ids()
 	session.start_match()
 	expect(session.world == null and not session.messages.is_empty(), "a rejected start leaves the room idle")
@@ -578,6 +638,8 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 	session.remove_seat(2)
 	expect(rules.phase == MatchRules.Phase.PLAYING, "leaving queues a world command")
 	await tree.physics_frame
+	expect(session._match_info["names"][2] == "B" and session._match_info["hues"][2] == 0.5,
+			"rejoining after a participant leaves retains the original match roster")
 	var result := arena_round(session.world)
 	tick = session.world.tick
 	await tree.physics_frame
@@ -590,13 +652,13 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 	expect(session.world == null and old_match.get_ref() == null and body.get_ref() == null and space.get_ref() == null,
 			"returning to the room releases the match, player and physics world")
 
-	session.add_seat(12)
+	session.add_seat(12, {"name": "B", "hue": 0.5})
 	session.start_match()
 	expect(session.world.tick == 0 and session.world.rules.phase == MatchRules.Phase.WAITING,
 			"the same room can open a fresh match")
 	session.remove_seat(2)
 	expect(session.world == null, "an expiring seat cancels the unstarted match")
-	session.add_seat(12)
+	session.add_seat(12, {"name": "B", "hue": 0.5})
 	session.start_match()
 	old_match = weakref(session.world)
 	session.free()

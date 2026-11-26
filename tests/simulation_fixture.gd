@@ -23,6 +23,10 @@ func _place(actor: Player, at: Vector2, team: int = 0) -> void:
 func _attack(held: int, pressed: int, released := 0) -> Array:
 	return [0.0, held, pressed, released, 0, Vector2.RIGHT]
 
+func step_actions(actor: Player, record: Array, delta := ActorStep.DT) -> Array:
+	ActorStep.step(actor, record, delta)
+	return actor.combat_requests
+
 func submit(actor: Player, requests: Array) -> void:
 	actor.combat_requests = requests
 	actor.combat.resolve_requests([actor.role])
@@ -35,18 +39,18 @@ class ActorDisplay extends Node:
 	var _world := WorldView.new()
 	var presenter: MatchPresenter
 
-func _display(parent: Node, actor: Player) -> ActorDisplay:
+func _display(parent: TestWorld, actor: Player) -> ActorDisplay:
 	var display := ActorDisplay.new()
-	var spec := WorldSpec.solo(_document, Vector2i.ZERO, [WeaponType.RIFLE], 0)
-	display.presenter = MatchPresenter.new(spec, _terrain, actor.role, null)
+	var spec := WorldSpec.solo(parent.document, Vector2i.ZERO, [WeaponType.RIFLE], 0)
+	display.presenter = MatchPresenter.new(spec, parent.terrain, actor.role, null)
 	display._frame = display.presenter.frame
-	display._world.bind(canvas_for(parent), _terrain.map_size)
+	display._world.bind(canvas_for(parent), parent.terrain.map_size)
 	return display
 
 func _draw_actor(display: ActorDisplay, actor: Player) -> void:
 	var row := actor.capture_state()
 	var frame := display._frame
-	frame.begin(0.0, actor.position)
+	frame.begin(frame.now, actor.position)
 	var presenter := display.presenter
 	presenter._player_pose(actor.role, actor.position, actor.velocity, row, row, Vector2.RIGHT, false, false)
 	presenter._player_cues(actor.role, row, row, actor.position, false)

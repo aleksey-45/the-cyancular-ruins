@@ -8,7 +8,7 @@ signal join_requested(code: String, endpoint: Dictionary)
 
 const CARD_MIN_H := UiDesign.SP_9 + UiDesign.SP_8
 
-var _info: Dictionary = {}
+var _endpoint: Dictionary
 var _frame: MarginContainer
 var _row: HBoxContainer
 var _mode: Label
@@ -88,27 +88,25 @@ func _init() -> void:
 
 
 func present(info: Dictionary) -> void:
-	_info = info.duplicate(true)
-	var mode := str(info.get("mode", ""))
-	var beta := bool(info.get("beta", false))
-	var in_match := bool(info.get("in_match", false))
-	_mode.text = PvpSession.mode_name(mode, beta) if PvpSession.MODE_NAMES.has(mode) else mode
+	_endpoint = {"ip": info["ip"], "port": info["port"]}
+	var mode := str(info["mode"])
+	var beta := bool(info["beta"])
+	var in_match := bool(info["in_match"])
+	_mode.text = PvpSession.mode_name(mode, beta)
 	_mode.add_theme_color_override("font_color", _mode_color(mode))
 	_beta.visible = beta
 	_status.text = "对局中" if in_match else "等待中"
 	_status.add_theme_color_override("font_color", UiDesign.C_TEXT_DIM if in_match else UiDesign.C_ACCENT)
-	_code.text = str(info.get("code", ""))
-	_count.text = "人数 %d / %d" % [int(info.get("players", 0)), int(info.get("max", 0))]
+	_code.text = str(info["code"])
+	_count.text = "人数 %d / %d" % [int(info["players"]), int(info["max"])]
 	_fit_height()
 	# 延迟按场景树中生效的主题字体重新测量内容。
 	_fit_height.call_deferred()
 
 
 func _on_pressed() -> void:
-	if _info.is_empty():
-		return
 	Sfx.play("ui")
-	join_requested.emit(str(_info["code"]), {"ip": str(_info.get("ip", "")), "port": int(_info.get("port", 0))})
+	join_requested.emit(_code.text, _endpoint)
 
 
 # Button 不会按子控件自动调整尺寸。根据内容与内边距设置卡片最小高度。
@@ -119,9 +117,9 @@ func _fit_height() -> void:
 
 static func _mode_color(mode: String) -> Color:
 	match mode:
-		PvpSession.MODE_TEAM:
+		WorldSpec.TEAM:
 			return UiDesign.C_MODE_TEAM
-		PvpSession.MODE_ROYALE:
+		WorldSpec.ROYALE:
 			return UiDesign.C_MODE_ROYALE
 		_:
 			return UiDesign.C_ACCENT

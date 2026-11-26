@@ -10,21 +10,8 @@ const DEATH_PENALTY := 50
 const TEAM_KILL_PENALTY := 100
 
 
-# 自伤和友军伤害按伤害量合并扣分，击杀队友另计罚分。
-static func penalty(team_damage: int, self_damage: int, team_kills: int) -> int:
-	return (team_damage + self_damage) / DAMAGE_PER_POINT + team_kills * TEAM_KILL_PENALTY
-
-
-# 合计击杀、助攻和伤害得分，扣除阵亡与友军伤害等罚分。
-static func kscore(kills: int, assists: int, dealt: int, deaths: int,
-		team_damage: int = 0, self_damage: int = 0, team_kills: int = 0) -> int:
-	return kills * KILL_SCORE \
-			+ assists * ASSIST_SCORE \
-			+ dealt / DAMAGE_PER_POINT \
-			- deaths * DEATH_PENALTY \
-			- penalty(team_damage, self_damage, team_kills)
-
-
-# 回合计数为零时按一回合计算，以免除零。
-static func acs(total_kscore: int, rounds: int) -> float:
-	return float(total_kscore) / float(maxi(rounds, 1))
+static func acs(stats: Dictionary) -> float:
+	var offense: int = stats["kills"] * KILL_SCORE + stats["assists"] * ASSIST_SCORE + stats["dealt"] / DAMAGE_PER_POINT
+	var penalty: int = stats["deaths"] * DEATH_PENALTY + stats["team_kills"] * TEAM_KILL_PENALTY \
+			+ (stats["team_damage"] + stats["self_damage"]) / DAMAGE_PER_POINT
+	return float(offense - penalty) / stats["rounds"]

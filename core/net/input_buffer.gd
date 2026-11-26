@@ -26,6 +26,9 @@ var consumed_seq: int:
 static func neutral_frame() -> Array:
 	return [0, 1, 0, 0.0, 0, Vector2.RIGHT]
 
+func confirmed() -> Array:
+	return [epoch, action_ack] + _last
+
 func reset(new_epoch: int) -> void:
 	epoch = new_epoch
 	action_ack = 0
