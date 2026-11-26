@@ -3,36 +3,14 @@ extends RefCounted
 
 # 统计数组在开始采样前分配，主线程在每次采样时直接更新其中的数值。
 
-const NETWORK_POLL := 0
-const NETWORK_DISPATCH := 1
-const SERVER_TICK := 2
-const SERVER_SIMULATION := 3
-const WORLD_CAPTURE := 4
-const STATE_PREPARE := 5
-const STATE_ENCODE := 6
-const STATE_FANOUT := 7
-const TRANSPORT_SEND := 8
-const CLIENT_AUTHORITY := 9
-const CLIENT_TICK := 10
-const CLIENT_PRESENT := 11
-const REPLAY := 12
-const ACTOR_STEP := 13
-const PROJECTILE_STEP := 14
-const COMBAT_STEP := 15
-const HISTORY_SAVE := 16
-const TERRAIN_COMMIT := 17
-const CALLBACK_INTERVAL := 18
-const PHYSICS_TICKS := 19
-const REPLAY_TICKS := 20
-const PHYSICS_MOTION := 21
-const PHYSICS_RAY := 22
-const PHYSICS_SHAPE := 23
-const COUNT := 24
-const SAMPLES := 0
-const MEAN := 1
-const MAXIMUM := 2
-const TOTAL := 3
-const OVER_BUDGET := 4
+enum {
+	NETWORK_POLL, NETWORK_DISPATCH, SERVER_TICK, SERVER_SIMULATION, WORLD_CAPTURE, STATE_PREPARE,
+	STATE_ENCODE, STATE_FANOUT, TRANSPORT_SEND, CLIENT_AUTHORITY, CLIENT_TICK, CLIENT_PRESENT,
+	REPLAY, ACTOR_STEP, PROJECTILE_STEP, COMBAT_STEP, HISTORY_SAVE, TERRAIN_COMMIT,
+	CALLBACK_INTERVAL, PHYSICS_TICKS, REPLAY_TICKS, PHYSICS_MOTION, PHYSICS_RAY, PHYSICS_SHAPE,
+	COUNT,
+}
+enum { SAMPLES, MEAN, MAXIMUM, TOTAL, OVER_BUDGET }
 
 const TIME_BOUNDS := [100, 250, 500, 1000, 2000, 4000, 8000, 16667, 33334, 66667]
 const COUNT_BOUNDS := [0, 1, 2, 4, 8, 16, 32, 64, 128, 256]
@@ -94,11 +72,16 @@ static func corr_stats() -> Dictionary:
 static func _now() -> int:
 	return Time.get_ticks_usec()
 
+static func is_tick_count(metric: int) -> bool:
+	return metric in [PHYSICS_TICKS, REPLAY_TICKS]
+
 static func _new_window() -> Dictionary:
 	var metrics: Array = []
 	metrics.resize(COUNT)
 	for i in COUNT:
-		metrics[i] = [0, 0, 0, 0, 0, PackedInt64Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])]
+		var buckets := PackedInt64Array()
+		buckets.resize((COUNT_BOUNDS if is_tick_count(i) else TIME_BOUNDS).size() + 1)
+		metrics[i] = [0, 0, 0, 0, 0, buckets]
 	return {"started": 0, "ended": 0, "metrics": metrics}
 
 static func _add(row: Array, value: int, count_metric: bool, at: int) -> void:
@@ -126,14 +109,12 @@ static func is_enabled() -> bool:
 	return _enabled
 
 static func reset() -> void:
-	var enabled := _enabled
 	_pending = _new_window()
 	_published = _new_window()
 	_total = _new_window()
 	_last_frame = 0
 	_physics_ticks = 0
 	_replay_ticks = 0
-	_enabled = enabled
 	var now := _now()
 	_total["started"] = now
 	_pending["started"] = now
@@ -148,7 +129,7 @@ static func end(metric: int, started: int) -> void:
 static func observe(metric: int, value: int) -> void:
 	if not _enabled or metric < 0 or metric >= COUNT or value < 0:
 		return
-	var count_metric := metric == PHYSICS_TICKS or metric == REPLAY_TICKS
+	var count_metric := is_tick_count(metric)
 	var pending_row: Array = _pending["metrics"][metric]
 	var total_row: Array = _total["metrics"][metric]
 	var at := 0
@@ -182,7 +163,7 @@ static func publish() -> void:
 	if not _enabled:
 		return
 	_pending["ended"] = _now()
-	_published = _pending.duplicate(true)
+	_published = _pending
 	_pending = _new_window()
 	_pending["started"] = _published["ended"]
 
@@ -209,7 +190,7 @@ static func snapshot(total: bool) -> Dictionary:
 	for i in COUNT:
 		var sample: Array = window["metrics"][i]
 		var row := {}
-		row["unit"] = "ticks" if i == PHYSICS_TICKS or i == REPLAY_TICKS else "us"
+		row["unit"] = "ticks" if is_tick_count(i) else "us"
 		row["samples"] = sample[ROW_COUNT]
 		row["sum"] = sample[ROW_SUM]
 		row["max"] = sample[ROW_MAX]
@@ -217,22 +198,20 @@ static func snapshot(total: bool) -> Dictionary:
 		row["over_16667_us"] = sample[ROW_OVER]
 		row["histogram"] = (sample[ROW_HIST] as PackedInt64Array).duplicate()
 		metrics[NAMES[i]] = row
-	var time_bounds := PackedInt64Array()
-	for bound in TIME_BOUNDS:
-		time_bounds.append(int(bound))
-	var count_bounds := PackedInt64Array()
-	for bound in COUNT_BOUNDS:
-		count_bounds.append(int(bound))
-	var started: int = window["started"]
-	var ended: int = _now() if total else int(window["ended"])
 	var result := {}
 	result["enabled"] = _enabled
-	result["window_us"] = maxi(0, ended - started) if started else 0
+	result["window_us"] = duration_us(total)
 	result["storage_bytes"] = storage_bytes()
-	result["time_bucket_upper_us"] = time_bounds
-	result["count_bucket_upper"] = count_bounds
+	result["time_bucket_upper_us"] = PackedInt64Array(TIME_BOUNDS)
+	result["count_bucket_upper"] = PackedInt64Array(COUNT_BOUNDS)
 	result["metrics"] = metrics
 	return result
+
+static func duration_us(total := false) -> int:
+	var window := _total if total else _published
+	var started: int = window["started"]
+	var ended: int = _now() if total else int(window["ended"])
+	return maxi(0, ended - started) if started else 0
 
 static func storage_bytes() -> int:
 	# 分别计算当前采样、上一次发布的结果和累计结果。每行含五项统计量和十一个直方图区间。

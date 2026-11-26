@@ -1,14 +1,12 @@
 extends Node
 
-const MONITORS := {
-	"server_tick": PerformanceStats.SERVER_TICK, "state_encode_peer": PerformanceStats.STATE_ENCODE,
-	"state_fanout": PerformanceStats.STATE_FANOUT, "network_dispatch": PerformanceStats.NETWORK_DISPATCH,
-	"client_authority": PerformanceStats.CLIENT_AUTHORITY, "replay": PerformanceStats.REPLAY,
-	"actor_step": PerformanceStats.ACTOR_STEP, "terrain_commit": PerformanceStats.TERRAIN_COMMIT,
-	"physics_motion": PerformanceStats.PHYSICS_MOTION, "physics_ray": PerformanceStats.PHYSICS_RAY,
-	"physics_shape": PerformanceStats.PHYSICS_SHAPE,
-	"callback_interval": PerformanceStats.CALLBACK_INTERVAL,
-}
+const MONITORS := [
+	PerformanceStats.SERVER_TICK, PerformanceStats.STATE_ENCODE, PerformanceStats.STATE_FANOUT,
+	PerformanceStats.NETWORK_DISPATCH, PerformanceStats.CLIENT_AUTHORITY, PerformanceStats.REPLAY,
+	PerformanceStats.ACTOR_STEP, PerformanceStats.TERRAIN_COMMIT, PerformanceStats.PHYSICS_MOTION,
+	PerformanceStats.PHYSICS_RAY, PerformanceStats.PHYSICS_SHAPE, PerformanceStats.CALLBACK_INTERVAL,
+]
+var _registered: Array[StringName] = []
 var _next_publish := 0
 var _console := false
 var _summary_path := ""
@@ -43,13 +41,17 @@ func _ready() -> void:
 	set_physics_process(enabled)
 	_next_publish = Time.get_ticks_usec() + 1000000
 	if OS.is_debug_build():
-		Performance.add_custom_monitor("Game/monitor_enabled", PerformanceStats.is_enabled)
-		Performance.add_custom_monitor("Game/physics_ticks_per_frame_max", PerformanceStats.read.bind(PerformanceStats.PHYSICS_TICKS, PerformanceStats.MAXIMUM))
-		Performance.add_custom_monitor("Game/replay_ticks_per_frame_max", PerformanceStats.read.bind(PerformanceStats.REPLAY_TICKS, PerformanceStats.MAXIMUM))
+		_monitor("Game/monitor_enabled", PerformanceStats.is_enabled)
+		_monitor("Game/physics_ticks_per_frame_max", PerformanceStats.read.bind(PerformanceStats.PHYSICS_TICKS, PerformanceStats.MAXIMUM))
+		_monitor("Game/replay_ticks_per_frame_max", PerformanceStats.read.bind(PerformanceStats.REPLAY_TICKS, PerformanceStats.MAXIMUM))
 		for metric in MONITORS:
-			Performance.add_custom_monitor("Game/%s_samples" % metric, PerformanceStats.read.bind(MONITORS[metric], PerformanceStats.SAMPLES))
-			Performance.add_custom_monitor("Game/%s_mean_us" % metric, PerformanceStats.read.bind(MONITORS[metric], PerformanceStats.MEAN))
-			Performance.add_custom_monitor("Game/%s_max_us" % metric, PerformanceStats.read.bind(MONITORS[metric], PerformanceStats.MAXIMUM))
+			_monitor("Game/%s_samples" % PerformanceStats.NAMES[metric], PerformanceStats.read.bind(metric, PerformanceStats.SAMPLES))
+			_monitor("Game/%s_mean_us" % PerformanceStats.NAMES[metric], PerformanceStats.read.bind(metric, PerformanceStats.MEAN))
+			_monitor("Game/%s_max_us" % PerformanceStats.NAMES[metric], PerformanceStats.read.bind(metric, PerformanceStats.MAXIMUM))
+
+func _monitor(label: StringName, sample: Callable) -> void:
+	Performance.add_custom_monitor(label, sample)
+	_registered.append(label)
 
 func _physics_process(_delta: float) -> void:
 	PerformanceStats.physics_tick()
@@ -73,9 +75,8 @@ func _process(_delta: float) -> void:
 	PerformanceStats.publish()
 	_flush_correction_samples()
 	if _console:
-		var window := PerformanceStats.snapshot(false)
 		print("PERF window_us=%d samples(tick/encode/replay)=%.0f/%.0f/%.0f us mean/max tick=%.0f/%.0f encode_peer=%.0f/%.0f replay=%.0f/%.0f callback_interval_max=%.0f" % [
-				window["window_us"], PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.SAMPLES),
+				PerformanceStats.duration_us(), PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.SAMPLES),
 				PerformanceStats.read(PerformanceStats.STATE_ENCODE, PerformanceStats.SAMPLES),
 				PerformanceStats.read(PerformanceStats.REPLAY, PerformanceStats.SAMPLES),
 				PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.MEAN), PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.MAXIMUM),
@@ -91,14 +92,8 @@ func _exit_tree() -> void:
 	if _trace != null:
 		_trace.close()
 		_trace = null
-	if OS.is_debug_build():
-		Performance.remove_custom_monitor("Game/monitor_enabled")
-		Performance.remove_custom_monitor("Game/physics_ticks_per_frame_max")
-		Performance.remove_custom_monitor("Game/replay_ticks_per_frame_max")
-		for metric in MONITORS:
-			Performance.remove_custom_monitor("Game/%s_samples" % metric)
-			Performance.remove_custom_monitor("Game/%s_mean_us" % metric)
-			Performance.remove_custom_monitor("Game/%s_max_us" % metric)
+	for label in _registered:
+		Performance.remove_custom_monitor(label)
 	if not _summary_path.is_empty():
 		var file := FileAccess.open(_summary_path, FileAccess.WRITE)
 		if file == null:
