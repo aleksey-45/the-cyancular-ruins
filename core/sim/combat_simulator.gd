@@ -301,6 +301,34 @@ func capture_players() -> Dictionary:
 		states[role] = players[role].capture_state()
 	return states
 
+func sample_attacks(owner_role := 0) -> Dictionary:
+	return {
+		"projectiles": capture_projectiles(owner_role),
+		"beams": _owned_attacks(beams, owner_role),
+		"blasts": _owned_attacks(pending_blasts, owner_role),
+	}
+
+func capture_attacks() -> Dictionary:
+	var state := sample_attacks()
+	state["enemy_next"] = _next_enemy_projectile
+	return state
+
+func restore_attacks(state: Dictionary, restore_ids := true) -> void:
+	_restore_projectiles(state["projectiles"])
+	beams.assign(state["beams"])
+	pending_blasts.assign(state["blasts"])
+	if restore_ids:
+		_next_enemy_projectile = state["enemy_next"]
+
+static func _owned_attacks(records: Dictionary, owner_role: int) -> Dictionary:
+	if owner_role == 0:
+		return records.duplicate()
+	var states := {}
+	for id: int in records:
+		if ShotRules.shooter_role(id) == owner_role:
+			states[id] = records[id]
+	return states
+
 func capture_projectiles(owner_role := 0, motion_only := false) -> Dictionary:
 	var states := {}
 	for id: int in projectiles:
@@ -309,6 +337,11 @@ func capture_projectiles(owner_role := 0, motion_only := false) -> Dictionary:
 			states[id] = bullet.motion_state() if motion_only else bullet.capture_state()
 	return states
 
+func restore_projectile_motion(states: Dictionary) -> void:
+	for id: int in states:
+		if projectiles.has(id):
+			projectiles[id].restore_motion(states[id])
+
 func capture_enemies(ordinary_only := false) -> Dictionary:
 	var states := {}
 	for enemy: EnemyBase in enemies:
@@ -316,7 +349,7 @@ func capture_enemies(ordinary_only := false) -> Dictionary:
 			states[enemy.slot] = enemy.capture_state()
 	return states
 
-func restore_projectiles(states: Dictionary) -> void:
+func _restore_projectiles(states: Dictionary) -> void:
 	for id: int in projectiles.keys():
 		if not states.has(id) or states[id][BulletBody.SNAP_TYPE] != projectiles[id].type_id:
 			erase_projectile(id)

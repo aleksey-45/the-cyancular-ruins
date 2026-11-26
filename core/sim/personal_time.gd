@@ -46,10 +46,7 @@ func advance(combat: CombatSimulator, inputs: Dictionary, at: int) -> void:
 	for role: int in reversing:
 		var sample := histories[role].backward(ActorStep.DT)
 		combat.players[role].rewind_state(sample[TimeHistory.Sample.ACTOR], false)
-		var projectiles: Dictionary = sample[TimeHistory.Sample.PROJECTILES]
-		for id: int in projectiles:
-			if combat.projectiles.has(id):
-				combat.projectiles[id].restore_motion(projectiles[id])
+		combat.restore_projectile_motion(sample[TimeHistory.Sample.ATTACKS])
 	tick(ActorStep.DT)
 
 static func _sample(combat: CombatSimulator, player: Player) -> Array:

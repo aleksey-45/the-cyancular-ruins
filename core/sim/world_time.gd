@@ -54,10 +54,9 @@ func advance(combat: CombatSimulator, player: Player, held: int, at: int) -> voi
 		terrain.forget_before(history.oldest_environment().get("terrain", terrain.version))
 
 func _sample(combat: CombatSimulator, player: Player) -> Array:
-	return [player.capture_state(), combat.capture_projectiles(), {
+	return [player.capture_state(), combat.sample_attacks(), {
 		"tick": combat.tick, "terrain": combat.terrain.version, "elapsed": elapsed,
-		"enemies": combat.capture_enemies(true), "beams": combat.beams.duplicate(),
-		"blasts": combat.pending_blasts.duplicate(),
+		"enemies": combat.capture_enemies(true),
 	}]
 
 func rewind(combat: CombatSimulator, player: Player, delta := ActorStep.DT) -> void:
@@ -68,9 +67,8 @@ func rewind(combat: CombatSimulator, player: Player, delta := ActorStep.DT) -> v
 	elapsed = environment["elapsed"]
 	combat.terrain.apply_at(environment["terrain"], {})
 	player.rewind_state(sample[TimeHistory.Sample.ACTOR], true)
-	combat.restore_projectiles(sample[TimeHistory.Sample.PROJECTILES])
-	combat.beams.assign(environment["beams"])
-	combat.pending_blasts.assign(environment["blasts"])
+	# 仍在行动的精英敌人继续使用递减的弹丸序号。
+	combat.restore_attacks(sample[TimeHistory.Sample.ATTACKS], false)
 	for slot: int in environment["enemies"]:
 		combat.enemies[slot].restore_state(environment["enemies"][slot])
 

@@ -140,7 +140,9 @@ class StateBatch extends RefCounted:
 	var deltas := {}
 
 	func _init(frame: Dictionary) -> void:
-		data = frame["checkpoint"].merged({"inputs": frame["inputs"], "grace": frame["grace"]})
+		data = frame["checkpoint"].duplicate()
+		data["inputs"] = frame["inputs"]
+		data["grace"] = frame["grace"]
 
 func encode_input(packet: Array) -> PackedByteArray:
 	var s := StreamPeerBuffer.new()
@@ -478,8 +480,8 @@ static func _write_histories(s: StreamPeerBuffer, current: Dictionary, base: Dic
 			s.put_u32(sample[TimeHistory.Sample.COMMIT])
 			s.put_double(sample[TimeHistory.Sample.TIME])
 			_put_actor(s, sample[TimeHistory.Sample.ACTOR], [] if reference.is_empty() else reference[TimeHistory.Sample.ACTOR])
-			_put_records(s, sample[TimeHistory.Sample.PROJECTILES],
-					{} if reference.is_empty() else reference[TimeHistory.Sample.PROJECTILES], Field.U64, MOTION_FIELDS)
+			_put_records(s, sample[TimeHistory.Sample.ATTACKS],
+					{} if reference.is_empty() else reference[TimeHistory.Sample.ATTACKS], Field.U64, MOTION_FIELDS)
 			reference = sample
 
 static func _read_histories(s: Reader, base: Dictionary) -> Dictionary:
@@ -500,7 +502,7 @@ static func _read_histories(s: Reader, base: Dictionary) -> Dictionary:
 			var time: float = s.read(Field.F64)
 			var reference: Array = [] if samples.is_empty() else samples.back()
 			var actor := _get_actor(s, [] if reference.is_empty() else reference[TimeHistory.Sample.ACTOR])
-			var projectiles := _get_records(s, {} if reference.is_empty() else reference[TimeHistory.Sample.PROJECTILES],
+			var projectiles := _get_records(s, {} if reference.is_empty() else reference[TimeHistory.Sample.ATTACKS],
 					Field.U64, MOTION_FIELDS)
 			samples.append([at, time, actor, projectiles])
 		row.resize(TimeHistory.State.SAMPLES + 1)

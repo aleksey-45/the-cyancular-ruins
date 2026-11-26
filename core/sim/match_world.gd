@@ -95,17 +95,17 @@ func advance(inputs: Dictionary, commands: Array = []) -> void:
 
 func capture() -> Dictionary:
 	var started := PerformanceStats.begin()
-	var state := {
+	var state := combat.capture_attacks()
+	state.merge({
 		"tick": tick, "terrain": terrain.version, "combat_tick": combat.tick, "rng": combat.rng.state,
-		"players": combat.capture_players(), "projectiles": combat.capture_projectiles(),
-		"beams": combat.beams.duplicate(), "blasts": combat.pending_blasts.duplicate(),
+		"players": combat.capture_players(),
 		"pickups": combat.ground.capture(), "pickup_tick": combat.ground.tick, "pickup_next": combat.ground._next_id,
-		"enemies": combat.capture_enemies(), "enemy_next": combat._next_enemy_projectile, "kills": combat.enemy_kills,
+		"enemies": combat.capture_enemies(), "kills": combat.enemy_kills,
 		"rules": rules.capture() if rules != null else [], "stats": _stats.duplicate(true),
 		"accounts": personal_time.state_payload() if personal_time != null else {},
 		"histories": personal_time.capture_histories() if personal_time != null else {},
 		"world_time": world_time.capture() if world_time != null else [],
-	}
+	})
 	PerformanceStats.end(PerformanceStats.WORLD_CAPTURE, started)
 	return state
 
@@ -135,11 +135,8 @@ func restore(state: Dictionary) -> void:
 	combat.players = ordered
 	for slot: int in state["enemies"]:
 		combat.enemies[slot].restore_state(state["enemies"][slot])
-	combat.restore_projectiles(state["projectiles"])
-	combat.beams.assign(state["beams"])
-	combat.pending_blasts.assign(state["blasts"])
+	combat.restore_attacks(state)
 	combat.ground.restore(state["pickups"], state["pickup_tick"], state["pickup_next"])
-	combat._next_enemy_projectile = state["enemy_next"]
 	combat.enemy_kills = state["kills"]
 	combat.hits.clear()
 	combat.destroyed_subcells.clear()
@@ -164,26 +161,19 @@ func sample(only_role := 0) -> Dictionary:
 			maxf(enemy.hit_reaction_left, enemy.corpse_left), enemy.active, enemy.kind.elite,
 			enemy is EnemyBlackBird, EnemyJumpBird.DASH_TIMEOUT - enemy._dash_timer if enemy is EnemyJumpBird else 0.0,
 			enemy.collision_rect()])
-	var beams := {}
-	var blasts := {}
 	var account: GrainAccount
 	if world_time != null:
 		account = world_time.account
 	elif personal_time != null and only_role != 0:
 		account = personal_time.accounts[only_role]
-	for id: int in combat.beams:
-		if only_role == 0 or ShotRules.shooter_role(id) == only_role:
-			beams[id] = combat.beams[id]
-	for id: int in combat.pending_blasts:
-		if only_role == 0 or ShotRules.shooter_role(id) == only_role:
-			blasts[id] = combat.pending_blasts[id]
-	return {"tick": tick, "combat_tick": combat.tick, "players": actors,
-		"projectiles": combat.capture_projectiles(only_role), "beams": beams, "blasts": blasts,
+	var view := {"tick": tick, "combat_tick": combat.tick, "players": actors,
 		"pickups": combat.ground.capture() if only_role == 0 else {}, "pickup_tick": combat.ground.tick,
 		"kills": combat.enemy_kills, "enemies": enemies,
 		"elapsed": world_time.elapsed if world_time != null else combat.tick * ActorStep.DT,
 		"time_mode": world_time.mode if world_time != null else WorldTime.Mode.NONE,
 		"account": account.capture_state() if account != null else []}
+	view.merge(combat.sample_attacks(only_role))
+	return view
 
 func _step_solo_time(inputs: Dictionary, commands: Array) -> bool:
 	for command: Array in commands:

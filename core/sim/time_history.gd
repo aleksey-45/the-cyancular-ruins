@@ -3,7 +3,7 @@ extends RefCounted
 
 const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
 
-enum Sample { COMMIT, TIME, ACTOR, PROJECTILES, ENVIRONMENT }
+enum Sample { COMMIT, TIME, ACTOR, ATTACKS, ENVIRONMENT }
 enum State { TIME, SINCE_SAMPLE, REWOUND, SAMPLES }
 
 var time := 0.0
@@ -42,7 +42,7 @@ func record(delta: float, at: int, sample: Callable) -> void:
 		var previous: Array = _samples.back()
 		if values[0] == previous[Sample.ACTOR]:
 			values[0] = previous[Sample.ACTOR]
-		_share_rows(values[1], previous[Sample.PROJECTILES])
+		_share_rows(values[1], previous[Sample.ATTACKS])
 		if values.size() == 3:
 			_share_rows(values[2], previous[Sample.ENVIRONMENT])
 	var first := 0
