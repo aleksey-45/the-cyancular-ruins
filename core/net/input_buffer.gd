@@ -8,7 +8,7 @@ const ACTION_TICKS := 12
 
 enum { PACKET_FRAMES, PACKET_ACTIONS }
 
-# 每帧的输入状态与单次操作使用相同的前三个字段。SEQ 是输入序号，EPOCH 区分重置前后的输入，TARGET_TICK 是输入原定生效的模拟帧。
+# 持续输入和单次动作共用前三个字段。SEQ 是输入序号，EPOCH 区分重置前后的输入，TARGET_TICK 是原定生效的模拟帧。
 enum { SEQ, EPOCH, TARGET_TICK, FRAME_AX, FRAME_HELD, FRAME_AIM }
 enum { ACTION_PRESSED = TARGET_TICK + 1, ACTION_RELEASED, ACTION_WINST, ACTION_AIM }
 
@@ -38,7 +38,7 @@ func restore_authority(new_epoch: int, confirmed_action: int, record: Array) -> 
 	action_ack = confirmed_action
 	_last = record
 
-## 在当前预测位置接收确认。已经预测消费的输入进度继续有效。
+## 在当前预测进度上应用服务器确认，保留序号更大的本地持续输入。
 func acknowledge(confirmed_action: int, record: Array) -> void:
 	if record[SEQ] >= consumed_seq:
 		_last = record

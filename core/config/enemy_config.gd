@@ -1,7 +1,7 @@
 class_name EnemyConfig
 extends Resource
 
-# 敌人调参值见 enemy_config.tres。字段前缀区分通用参数和各类敌人。
+# enemy_config.tres 中的字段前缀区分通用参数和各类敌人的专用参数。
 
 @export var shared_hit_reaction_time: float
 @export var shared_corpse_time: float

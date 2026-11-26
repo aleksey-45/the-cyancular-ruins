@@ -1,7 +1,7 @@
 class_name PlayerConfig
 extends Resource
 
-# 玩家调参值见 player_config.tres。
+# 玩家参数见 player_config.tres。
 
 @export var body_scale: float
 @export var standing_hull: Rect2

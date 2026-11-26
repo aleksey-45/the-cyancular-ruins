@@ -179,7 +179,7 @@ func join_room(code: String, endpoint: Dictionary = {}) -> String:
 	var direct := _lan_endpoint(endpoint)
 	if not direct.is_empty():
 		var error := await _room_request(NetEvent.Kind.JOIN, payload, direct["port"], 8000, direct["ip"])
-		# 直连失败才回退隧道；连接已被新的请求取代时不再另起隧道。
+		# 原请求仍有效且直连失败时，才尝试通过 EasyTier 隧道加入。
 		if error == OK or error == ERR_SKIP:
 			return room_error(error)
 	var port := _lobby_port() if Tunnel.on_network(code) and NetBus.can_send_to_server() else 0
@@ -191,7 +191,7 @@ func join_room(code: String, endpoint: Dictionary = {}) -> String:
 	return room_error(await _room_request(NetEvent.Kind.JOIN, payload, port))
 
 
-## 局域网直连端点：需要非空地址和 1024–65535 的游戏端口，否则按空字典处理，回退原房码/隧道路径。
+## 直连端点须提供非空地址及 1024–65535 范围内的游戏端口。无效端点返回空字典，加入流程会尝试 EasyTier 隧道。
 func _lan_endpoint(endpoint: Dictionary) -> Dictionary:
 	if endpoint.is_empty():
 		return {}
@@ -245,7 +245,7 @@ func room_error(error: Error) -> String:
 		_: return "启动连接失败（%d）" % error
 
 # 只等待当前连接的预期回复。房间关闭通知也会结束此次等待。
-# host 为 127.0.0.1 时走本机连接，其余地址走 LAN 直连。
+# host 为 127.0.0.1 时走回环连接，其余地址走局域网直连。
 func _room_request(kind: int, data: Variant, port: int, timeout_ms := 8000, host := "127.0.0.1") -> Error:
 	var deadline := Time.get_ticks_msec() + timeout_ms
 	var error: Error

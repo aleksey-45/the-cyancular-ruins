@@ -1,7 +1,7 @@
 class_name GridPathfinder
 extends RefCounted
 
-# 距离、活动范围和 A* 寻路都把地图的左右边缘、上下边缘视为相连。
+# 距离计算和 A* 寻路都将地图的左右、上下边缘视为相连。
 
 # 相邻子格始终按相同顺序加入候选列表，确保同等优先级的路径能稳定复现。
 const DIRECTIONS := [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]
@@ -31,8 +31,8 @@ static func anchor_to_nearest(pos: Vector2, anchor: Vector2, size: Vector2) -> V
 	return anchor + toroidal_delta_px(anchor, pos, size)
 
 
-# 计算地图两侧哪些平移位置需要放置同一份地形，以补齐边缘附近的碰撞和绘制范围。
-# 返回结果是偏移的取值范围，横向每单位为一个地图宽度，纵向每单位为一个地图高度。(0, 0) 表示不平移。
+# 返回为满足边缘碰撞或绘制范围所需的平移副本索引。
+# (0, 0) 表示原位置。横向和纵向索引每增加 1，分别平移一个地图宽度和高度。
 static func seam_copy_range(bounds: Rect2, period: Vector2, reach: Vector2) -> Rect2i:
 	var first := -Vector2i(((bounds.end + reach - period) / period).ceil())
 	var last := Vector2i(((reach - bounds.position) / period).ceil())
@@ -55,11 +55,12 @@ static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
 
 
+## 在访问上限和可选搜索半径内做 A*。未到达目标时返回通向距目标最近的已访问子格的路径。
 static func find_path(size: Vector2i, start: Vector2i, goal: Vector2i, can_pass: Callable,
 		max_visit := 4000, radius := -1) -> Array[Vector2i]:
 	if start == goal:
 		return []
-	# 搜索预算只覆盖局部子格，按实际访问的位置保存代价和前驱。
+	# 按实际发现的子格保存代价和前驱。
 	var cost: Dictionary[int, int] = {}
 	var parent: Dictionary[int, int] = {}
 	var origin := start.y * size.x + start.x
@@ -127,8 +128,7 @@ static func _pop(heap: Array[Vector2i]) -> Vector2i:
 	heap[i] = last
 	return first
 
-# 先随机排列候选瓦片，再挑选相互至少间隔 clearance 格的位置。
-# 达到初始间距的位置不够时，逐步缩小最小间距。
+# 打乱候选子格，优先选择间距至少为 clearance 的位置。候选位置不足时逐步缩小最小间距。
 static func spread_cells(cells: Array[Vector2i], count: int, clearance: int, cols: int, rows: int,
 		rng: RandomNumberGenerator) -> Array[Vector2i]:
 	var picked: Array[Vector2i] = []

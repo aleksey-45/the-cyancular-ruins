@@ -4,7 +4,7 @@ extends RefCounted
 signal changed
 signal selection_changed
 signal cells_changed(layer: int, changes: PackedInt32Array)
-## 已有点位更新时传其编号。点位列表需要重排时传 -1。
+## 传点位 ID 时只更新该项。传 -1 时重建点位列表。
 signal points_changed(updated_id: int)
 
 const POINT_EDIT_BYTES := 128
@@ -72,7 +72,7 @@ func mark_saved(filename: String) -> void:
 	_saved_revision = revision
 	changed.emit()
 
-# 历史只存下次要换回的值和版本。
+# 撤销和重做记录分别保存下一次操作要恢复的内容和修订号。
 func _record(edit: Dictionary, direction: int) -> void:
 	var undoing := direction < 0
 	edit.revision = revision
@@ -102,7 +102,7 @@ func travel(direction: int) -> bool:
 
 func put_cells(changes: PackedInt32Array, target_layer := layer, direction := 0) -> bool:
 	if changes.is_empty() or (direction == 0 and locked[target_layer]): return false
-	# 先读完整笔的旧值，同一格经过多次也能撤销到落笔前。
+	# 写入前读取所有旧值，确保重复修改的子格也能恢复到本次操作前的状态。
 	var previous := changes.duplicate()
 	var cells: PackedInt32Array = map.layers[target_layer]
 	var width: int = map.size.x

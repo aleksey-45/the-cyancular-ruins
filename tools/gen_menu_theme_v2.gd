@@ -59,9 +59,8 @@ func _label_variants(t: Theme) -> void:
 	t.set_color("font_color", "Dim", Style.C_TEXT_DIM)
 
 
-# Field = Label(表单标签)与 LineEdit(输入框)共用的**唯一** variation(名字全局唯一,见文件头)。
-# Label 只吃 font_size;LineEdit 吃输入框样式 + font_size。颜色不写:两者各自从自己的基类继承
-# (Label=C_TEXT / LineEdit=C_TEXT);写在这里会把另一边的颜色一起改掉。
+# Label 和 LineEdit 共用 Field 主题类型变体的字号，各自从控件类型读取正文颜色。
+# LineEdit 还会读取输入框样式、插入光标颜色和占位文字颜色。
 func _field_variants(t: Theme) -> void:
 	t.set_type_variation("Field", "Control")
 	t.set_font_size("font_size", "Field", Style.T_LABEL)
@@ -98,7 +97,7 @@ func _menu_btn(t: Theme, name: String, edge: Color, fg: Color) -> void:
 
 
 func _danger_btn(t: Theme) -> void:
-	# 危险操作:描边/文字用 C_DANGER;hover/pressed 时文字转 C_TEXT(在亮填充上保持可读)。
+	# 危险操作常态使用警示色描边。悬停或按下时改用正文颜色，保持亮底上的文字可读。
 	t.set_type_variation("Danger", "Button")
 	t.set_font_size("font_size", "Danger", Style.T_H2)
 	t.set_stylebox("normal", "Danger", _button_box(Style.C_HEADER, Style.C_DANGER))
@@ -142,7 +141,6 @@ func _panel_variants(t: Theme) -> void:
 	t.set_stylebox("panel", "Bar",
 			Style.flat(Style.C_HEADER, Style.C_BORDER, Style.BORDER_W_DIM, Style.SP_4, Style.SP_2))
 
-	# ── 内嵌面板与列表行──
 	t.set_stylebox("panel", "PanelContainer", Style.panel_box())
 
 	t.set_type_variation("PanelCarved", "PanelContainer")
@@ -203,16 +201,12 @@ func _carved_body(pad: Vector2) -> StyleBoxFlat:
 	return body
 
 
-# ── Kit:契约要求 CheckButton / CheckBox、ScrollBar、TabContainer / HSplit / VSplit、各 Dialog 共用
-#    同名 variation。Godot 的 variation 名**全局唯一**(一个名字只能绑一个 base),所以这里只用一条
-#    `Kit`(base=Control)承载这些控件各自的主题项:每个控件只会去查它自己用到的 slot 名,互不冲突;
-#    仅有 "panel" 被 TabContainer(内容底板)与 AcceptDialog(窗口面板)共用 —— 两者都用同一种面板块,
-#    正是"统一皮肤"想要的。Dialog 是 Window 派生(不是 Control),但 variation 链会先走 Kit 再落到
-#    AcceptDialog/Window 的原生类型,所以照样命中。
+# Kit 为多类控件提供共用的主题项。各控件按名称查找所需的主题项，TabContainer 和 AcceptDialog 共用 panel。
+# 对话框也会先查 Kit，再沿自身的类继承链查找。
 func _kit_variants(t: Theme) -> void:
 	t.set_type_variation("Kit", "Control")
 
-	# 开关 / 勾选框:文字与自绘胶囊图标(与旧 CheckButton 基础类型同一套素材)。
+	# 开关和复选框共用 CheckButton 的胶囊形图标。
 	t.set_font_size("font_size", "Kit", Style.T_H2)
 	t.set_color("font_color", "Kit", Style.C_TEXT)
 	t.set_color("font_hover_color", "Kit", Style.C_ACCENT)
@@ -221,7 +215,7 @@ func _kit_variants(t: Theme) -> void:
 	t.set_icon("unchecked", "Kit", SWITCH_OFF)
 	t.set_icon("checked", "Kit", SWITCH_ON)
 
-	# 滚动条:轨道暗、滑块按状态上色。
+	# 滚动条使用深色轨道，滑块在悬停和按下时使用强调色。
 	var sb_pad := Style.SP_1
 	t.set_stylebox("scroll", "Kit", Style.flat(Style.C_BTN_FILL_DN, Color.TRANSPARENT, 0, sb_pad, sb_pad))
 	t.set_stylebox("scroll_focus", "Kit", Style.flat(Style.C_BTN_FILL_DN, Color.TRANSPARENT, 0, sb_pad, sb_pad))
@@ -229,7 +223,7 @@ func _kit_variants(t: Theme) -> void:
 	t.set_stylebox("grabber_highlight", "Kit", Style.flat(Style.C_ACCENT, Color.TRANSPARENT, 0, sb_pad, sb_pad))
 	t.set_stylebox("grabber_pressed", "Kit", Style.flat(Style.C_ACCENT, Color.TRANSPARENT, 0, sb_pad, sb_pad))
 
-	# TabContainer:内容板 + 标签条 + 五种 tab 态 + 文字色/间距(它会把这些同名项覆盖给内部 TabBar)。
+	# TabContainer 将选项卡样式、文字颜色和间距应用到内部的 TabBar。
 	t.set_stylebox("panel", "Kit",
 			Style.flat(Style.C_SURFACE, Style.C_BORDER, Style.BORDER_W, Style.SP_4, Style.SP_4))
 	t.set_stylebox("tabbar_background", "Kit",
@@ -254,15 +248,14 @@ func _kit_variants(t: Theme) -> void:
 	t.set_constant("icon_separation", "Kit", Style.SP_1)
 	t.set_constant("outline_size", "Kit", 0)
 
-	# HSplitContainer / VSplitContainer(主题项定义在 SplitContainer 基类上)。
+	# 横向和纵向分隔容器共用 SplitContainer 定义的主题项。
 	t.set_stylebox("split_bar_background", "Kit",
 			Style.flat(Style.C_BTN_FILL_DN, Style.C_BORDER_DIM, Style.BORDER_W_DIM, Style.SP_1, Style.SP_1))
 	t.set_constant("separation", "Kit", Style.SP_2)
 	t.set_constant("minimum_grab_thickness", "Kit", Style.SP_3)
 	t.set_constant("autohide", "Kit", 0)
 
-	# AcceptDialog / ConfirmationDialog / FileDialog:窗口面板 + 标题行 + 按钮区间距。
-	# (内嵌子窗口走 Window 的 embedded_border;独立窗口走 title_*。)
+	# 对话框使用 Window 的 embedded_border 绘制嵌入式窗口边框。
 	t.set_stylebox("embedded_border", "Kit",
 			Style.flat(Style.C_SURFACE, Style.C_BORDER, Style.BORDER_W, Style.SP_1, Style.SP_1))
 	t.set_stylebox("embedded_unfocused_border", "Kit",
@@ -278,8 +271,7 @@ func _kit_variants(t: Theme) -> void:
 
 
 func _flat_editor_variants(t: Theme) -> void:
-	# 编辑器"去盒子化"档(2026-11-10):工具栏命令、工具列、图层行都改成**透明底 + hover 才出底**;
-	# 边框只留给输入/面板/焦点,强调色只给"当前工具/当前图层/焦点"——避免每个控件都是同权重的实心盒子。
+	# 编辑器的工具栏按钮、工具列和图层行默认透明，悬停时显示底色，焦点用强调色边框标记。
 	for name in ["FlatButton", "ToolButton"]:
 		t.set_type_variation(name, "Button")
 		t.set_font_size("font_size", name, Style.T_LABEL)
@@ -294,7 +286,7 @@ func _flat_editor_variants(t: Theme) -> void:
 		t.set_color("font_pressed_color", name, Style.C_ACCENT)
 		t.set_color("font_disabled_color", name, Style.C_TEXT_MUTE)
 
-	# 当前工具/当前图层:左缘 2px 强调条 + 轻底;不靠整块亮色抢画布。
+	# 当前工具和图层用淡色底与左侧 2 像素强调色边框标记。
 	var active_left := Style.flat(Style.C_ROW, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1)
 	active_left.border_width_left = 2
 	active_left.border_color = Style.C_ACCENT
@@ -310,7 +302,7 @@ func _flat_editor_variants(t: Theme) -> void:
 		t.set_color("font_hover_color", name, Style.C_ACCENT)
 		t.set_color("font_focus_color", name, Style.C_ACCENT)
 
-	# 普通图层行:只有 hover 才出底,和工具列的 FlatButton 同族。
+	# 普通图层行和工具栏按钮一样，默认透明，悬停时显示底色。
 	t.set_type_variation("LayerRow", "Button")
 	t.set_font_size("font_size", "LayerRow", Style.T_LABEL)
 	t.set_stylebox("normal", "LayerRow", Style.flat(Style.C_TRANSPARENT, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
@@ -357,11 +349,8 @@ func _other_controls(t: Theme) -> void:
 			_row_box(Style.C_ACCENT, Style.C_ACCENT))
 
 
-	# ── 下拉 / 弹出菜单 / 提示 / Tab(2026-11-10)───────────────────────────────
-	# 之前只有 Button/LineEdit/CheckButton 有皮肤,OptionButton/PopupMenu/菜单下拉/工具提示/Tab
-	# 全部回落到 Godot 默认主题(Noto Sans 字体)⇒ 编辑器与设置页的"字体不统一"就从这里来。
-	# 这里只加"基础类型"条目(不是 variation):字体族仍走 Theme.default_font(像素字体链),
-	# 字号用 T_LABEL=16,和紧凑工具栏同一档。
+	# 下拉框、弹出菜单、工具提示和选项卡的主题项直接定义在各自的控件类型中。
+	# 字体沿用 Theme.default_font，字号与紧凑工具栏一致。
 	var ob := Style.flat(Style.C_FIELD, Style.C_BORDER_DIM, 1, Style.SP_3, Style.SP_2)
 	t.set_stylebox("normal", "OptionButton", ob)
 	var ob_hi := Style.flat(Style.C_BTN_FILL_HI, Style.C_BORDER, 1, Style.SP_3, Style.SP_2)
@@ -389,8 +378,7 @@ func _other_controls(t: Theme) -> void:
 	t.set_color("font_disabled_color", "PopupMenu", Style.C_TEXT_DIM)
 	t.set_color("font_separator_color", "PopupMenu", Style.C_TEXT_DIM)
 
-	# 为 MenuButton 单独定义主题项，避免 CheckButton 继承普通按钮样式。
-	# 菜单栏文字按钮:透明底,hover 才出轻底;不再是"实心盒子排在标题旁边"。
+	# 菜单栏按钮单独定义状态样式，默认透明，悬停时显示底色。
 	t.set_stylebox("normal", "MenuButton",
 			Style.flat(Style.C_TRANSPARENT, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
 	t.set_stylebox("hover", "MenuButton",
@@ -411,8 +399,7 @@ func _other_controls(t: Theme) -> void:
 	t.set_font_size("font_size", "TooltipLabel", Style.T_LABEL)
 	t.set_color("font_color", "TooltipLabel", Style.C_TEXT)
 
-	# TabBar / TabContainer:下划线式(2026-11-10):透明 tab + 选中 2px 青色底线,
-	# 不再给每个 tab 套四边框盒子;Tab 区与右栏同底,视觉上像"分段标题"而不是按钮。
+	# 选项卡使用透明底，选中状态用 2 像素强调色底线标记。
 	t.set_font_size("font_size", "TabBar", Style.T_LABEL)
 	t.set_color("font_selected_color", "TabBar", Style.C_TEXT)
 	t.set_color("font_unselected_color", "TabBar", Style.C_TEXT_DIM)

@@ -1,7 +1,7 @@
 class_name InputClock
 extends RefCounted
 
-# 时间单位为一次采样。稳态误差半衰期半秒，短期偏移按 1/4 秒衰减。
+# 以采样间隔为时间单位。稳态误差的半衰期为 0.5 秒，短期偏移为 0.25 秒。
 const GAIN := 1.0 - 0.5 ** (1.0 / 30.0)
 const PERSISTENCE := 0.5 ** (1.0 / 15.0)
 const PREVIEW_WEIGHT := GAIN * PERSISTENCE / (1.0 - (1.0 - GAIN) * PERSISTENCE)
@@ -19,7 +19,7 @@ var _last_adjustment := -SPACING
 var _direction := 0
 var _held := 0
 
-# 时序模块两端共用此格式。快照层只转递整段字节。
+# 服务器和客户端的时序模块共用此格式，快照直接携带这些字节。
 static func pack_feedback(sample: int, steady: float, recent: float, drift := 0.0) -> PackedByteArray:
 	var bytes := PackedByteArray()
 	bytes.resize(21)
@@ -47,7 +47,7 @@ func _observe(feedback: PackedByteArray) -> void:
 func reset(at: int, seq: int, ping_ms: int, feedback: PackedByteArray) -> void:
 	_observed_seq = 0
 	_observe(feedback)
-	# 快照到达本地再回到服务器约为一个 RTT。新版本的首包预留两帧启动余量。
+	# 缺少时序反馈时，按一次往返时延估算预测进度，并预留两帧余量。
 	var first := seq + ceili(_steady) if _observed_seq > 0 else at + ceili(maxi(0, ping_ms) * 0.06) + 2
 	_end = clampi(first, at, at + InputBuffer.FUTURE_TICKS - 1)
 	_offset = float(_end - seq)
@@ -62,7 +62,7 @@ func synchronize(at: int, seq: int, feedback: PackedByteArray) -> void:
 		_end = at
 		_offset = float(at - seq)
 
-# 只调整尚未采集的输入。少走一步时把本次输入排到下一模拟帧。
+# 目标帧在采样时确定。少推进一步时，本次输入仍排到下一模拟帧。
 func sample(seq: int, input: Array) -> int:
 	var direction := int(signf(input[ActorInput.AX]))
 	var protect_edge: bool = input[ActorInput.PRESSED] != 0 or input[ActorInput.RELEASED] != 0 \
@@ -75,7 +75,7 @@ func sample(seq: int, input: Array) -> int:
 	var correction := 0
 	if _observed_seq > 0:
 		var age := maxi(0, seq - _observed_seq)
-		# 追踪器所看的未来平均在 1/GAIN 个样本之后。过期趋势的外推限于一帧并逐渐撤销。
+		# 估计到 1 / GAIN 个采样间隔后的时钟偏移。外推最多一帧，反馈陈旧时逐渐衰减。
 		var shift := clampf(_drift * (age + 1.0 / GAIN), -1.0, 1.0) * pow(PERSISTENCE, maxi(0, age - 30))
 		var steady := ceili(_steady + shift)
 		var excursion := (ceili(_recent + shift) - steady) * PREVIEW_WEIGHT * pow(PERSISTENCE, age)
@@ -97,8 +97,8 @@ func sample(seq: int, input: Array) -> int:
 	return maxi(normal, _end)
 
 static func _choose_step(errors: PackedFloat64Array, since: int, protect_edge: bool) -> int:
-	# 六步内最多一次调整。枚举何时多走/少走一步，最小化整段相位平方误差。
-	# 从后往前遍历，平局时优先维持当前节奏。未来采样的按键尚不可见。
+	# 两次调整至少间隔六次采样。在接下来六次采样中枚举增减一步的位置，使相位误差的平方和最小。
+	# 从后往前遍历，同等代价时优先推迟调整。按键保护只检查已采集的当前输入。
 	var correction := 0
 	var sum := 0.0
 	var best := 0.0

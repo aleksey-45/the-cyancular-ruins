@@ -134,7 +134,7 @@ func predict(record: Array) -> Dictionary:
 	_advance_prediction(_clock.advance(ActorStep.DT, world.tick, limit))
 	return view()
 
-## 处理可用的权威快照。校正需要回滚时，恢复权威状态并重放未确认的输入。
+## 用最新可用的权威快照校正预测。回滚后重放仍有效的未确认输入，复活时从新状态开始。
 func reconcile(ping_ms: int) -> Dictionary:
 	replay_ticks = 0
 	var anchor := _take_anchor()
@@ -181,7 +181,7 @@ func _take_anchor() -> Dictionary:
 			_pending.erase(version)
 	return chosen
 
-## 返回是否恢复了模拟。本地玩家相符时，可继续当前预测。
+## 返回是否从快照恢复了模拟。
 func _adopt(anchor: Dictionary, ping_ms: int, initial := false) -> bool:
 	var state: Dictionary = anchor["checkpoint"]
 	var meta: Array = anchor["inputs"][role]

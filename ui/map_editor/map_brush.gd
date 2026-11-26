@@ -26,7 +26,7 @@ func _ink(background: bool) -> int:
 func _tinted(tile: int) -> int:
 	return CyrmMap.tile_value(CyrmMap.tile_material(tile), tint)
 
-# 按落笔顺序展开每个区域，重叠的笔印也各占一条记录。
+# 按区域顺序展开为逐子格改动。同一子格被多次覆盖时，每次写入都保留在序列中。
 func _paint_regions(session: MapEditSession, regions: Array[Rect2i], ink: int, recolor := false,
 		gradient_start := Vector2i.ZERO, gradient_axis := Vector2.ZERO) -> bool:
 	var count := 0
@@ -98,7 +98,7 @@ func bucket(cell: Vector2i, session: MapEditSession) -> bool:
 	var regions: Array[Rect2i] = []
 	var seeds := PackedInt32Array([root])
 	var cursor := 0
-	# 记录连通的水平段。相邻行的每段旧色只需一个种子。
+	# 按水平连续段填充相同子格值，并将相邻行中与它连通的段加入队列。
 	while cursor < seeds.size():
 		var left := seeds[cursor]
 		cursor += 1

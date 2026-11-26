@@ -140,7 +140,7 @@ func _paint_tile(tiles: TileMapLayer, cell: Vector2i, value: int) -> void:
 	if CyrmMap.tile_material(value) == 0:
 		tiles.erase_cell(cell)
 		return
-	# 同一材质与色调共用一张图，八档透明度由 TileData 的 modulate 表示。
+	# 材质和色调相同的子格共用图块图集。八档不透明度由 TileData.modulate.a 区分。
 	var opaque := value | (7 << 9)
 	var source: int = _source_ids.get(opaque, -1)
 	if source < 0:
@@ -217,7 +217,7 @@ func _copy_origin(i: int) -> Vector2:
 func _point_at(event: InputEventMouse) -> int:
 	if destination_point_id >= 0 or point_hint.is_empty() or event.alt_pressed or not session.bounds.has_point(mouse_cell):
 		return -1
-	# 优先命中顶层图样，重叠点位仍可从列表逐个选中。
+	# 选取离光标最近的命中点位。同距时优先保留已选点位，其余按绘制顺序取最上层。
 	var best := -1
 	var closest := INF
 	var radius := clampf(zoom * 1.8, 5.0, 18.0)
@@ -298,7 +298,7 @@ func _overlay() -> void:
 		var area := Rect2i(mouse_cell - Vector2i.ONE * (cursor_width / 2), Vector2i.ONE * cursor_width)
 		preview.draw_rect(_screen_box(area), Color.WHITE, false, 1)
 
-## 工具在按下时请求拖动。画布负责预览，松手交回轨迹，取消只丢弃这次拖动。
+## 从当前鼠标子格开始预览拖动。松开时把拖动经过的子格传给回调，取消时丢弃预览。
 func begin_drag(gesture: String, on_release: Callable) -> void:
 	_gesture = gesture
 	_on_release = on_release

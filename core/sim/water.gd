@@ -13,7 +13,8 @@ static func head_submerged(terrain: Terrain, bounds: Rect2) -> bool:
 	return terrain.water(Vector2(bounds.get_center().x, bounds.position.y))
 
 
-## 返回脚底的入水深度。开始游泳需要达到最低深度。已在游泳时，脚底稍微离开水面也不会立即退出。无法继续游泳时返回 -INF。
+## 返回脚底的入水深度，未进入或已退出游泳状态时返回 -INF。
+## 开始游泳需要达到入水深度阈值，游泳中脚底略高于水面仍可维持状态。
 static func swim_depth(terrain: Terrain, foot: Vector2, swimming: bool) -> float:
 	var depth := terrain.water_depth(foot)
 	if swimming:
@@ -23,6 +24,6 @@ static func swim_depth(terrain: Terrain, foot: Vector2, swimming: bool) -> float
 	return depth if depth >= WCFG.water_enter_depth else -INF
 
 
-# 阻力只作用于水中的弹丸。指数衰减使经过相同时间后的减速量不受更新次数影响。
+# 水中弹丸的速度按指数衰减，相同的累计浸水时间对应相同的阻力倍率。
 static func bullet_drag_factor(in_water: bool, drag: float, delta: float) -> float:
 	return exp(-drag * delta) if in_water else 1.0

@@ -1,7 +1,7 @@
 class_name InputScheduler
 extends RefCounted
 
-# 每个输入版本有独立实例。快照可以将 feedback 原样交给预测时钟。
+# 每个输入版本使用独立实例。快照把 feedback 原样传给预测时钟。
 const HZ := 60
 const BLOCK := 15
 const WINDOW := 8 * HZ
@@ -15,10 +15,10 @@ var _feedback := PackedByteArray()
 var _reported := 0
 var _next_update := 0
 var _latest := 0
-# seq -> (首次承诺帧, 首份持续输入的可用帧, 收包到分发的微秒数)。只有边沿时可用帧为零。
+# 按输入序号记录原定目标帧、持续输入的首次可用帧和从收包到分发的微秒数。仅收到单次动作时，可用帧为 0。
 var _samples: Dictionary[int, Vector3i] = {}
 
-# 最新输入的预测时钟已越出服务端窗口时，由调用方重新建立输入版本。
+# 最新持续输入超出服务器时序窗口时返回 false，由调用方重置输入版本。
 func submit(buffer: InputBuffer, packet: Array, tick: int, received_us := -1, dispatch_us := -1) -> bool:
 	var available := tick + 1
 	if dispatch_us < 0:
@@ -67,7 +67,7 @@ static func _quantile(sorted: Array[float], fraction: float) -> float:
 	return sorted[ceili(sorted.size() * fraction) - 1]
 
 func _update(tick: int) -> void:
-	# 给最近的采样留出冗余副本的送达时间，再用已可用的不同输入估计分布。
+	# 给最近的序号留出冗余副本到达的时间，再按输入序号去重统计。
 	var end := _latest - InputBuffer.REDUNDANCY
 	for seq: int in _samples.keys():
 		if seq < end - WINDOW or _samples[seq].x < tick - WINDOW - InputBuffer.FUTURE_TICKS:
@@ -83,7 +83,7 @@ func _update(tick: int) -> void:
 		for seq in range(maxi(1, start), start + BLOCK):
 			var first: Vector3i = _samples.get(seq, Vector3i.ZERO)
 			if first.y > 0 and first.y <= tick:
-				# 扣除不足一帧的相位。向上取整总能还原实际可用帧，跨帧积压仍计入延迟。
+				# 扣除不足一帧的分发排队时间。向上取整可还原实际可用帧，跨帧积压仍计入延迟。
 				block.append(first.y - seq - first.z * (HZ / 1000000.0))
 		if block.size() <= BLOCK / 2:
 			consecutive = 0
@@ -107,7 +107,7 @@ func _update(tick: int) -> void:
 		if older * newer > 0.0 and minf(absf(older), absf(newer)) > 0.1:
 			slope = signf(newer) * minf(absf(older), absf(newer)) / (2 * BLOCK)
 			level = centers[-1]
-	# 只与相近的线路水平比较，但保留单个时间段内的突发延迟和派发停顿。
+	# 选取中位延迟相近的时间段，并保留段内突发的延迟和分发停顿。
 	var offsets: Array[float] = []
 	for i in centers.size():
 		var center := centers[i]

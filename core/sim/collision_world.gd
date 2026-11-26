@@ -1,7 +1,7 @@
 class_name CollisionWorld
 extends RefCounted
 
-# 为 2D 物理空间提供移动检测、射线查询和形状查询，并处理地图边缘相连的情况。
+# 提供二维物理空间的位移检测、射线查询和形状查询。跨地图边缘的查询可从另一侧接续。
 
 const LAYER_TERRAIN := 1
 const LAYER_TEAM_A := 2
@@ -32,7 +32,7 @@ static func rectangle(size: Vector2) -> RectangleShape2D:
 		_rectangles[size] = shape
 	return shape
 
-## 直接向物理服务器申请静态物理体，并初始化碰撞层和碰撞遮罩。
+## 通过物理服务器创建静态物理体，并设置碰撞层与碰撞遮罩。
 static func create_body(layer: int, mask: int) -> RID:
 	var rid := PhysicsServer2D.body_create()
 	PhysicsServer2D.body_set_mode(rid, PhysicsServer2D.BODY_MODE_STATIC)
@@ -40,7 +40,7 @@ static func create_body(layer: int, mask: int) -> RID:
 	PhysicsServer2D.body_set_collision_mask(rid, mask)
 	return rid
 
-## 只检测给定起点和位移，不改变物理体位置。result 可接收允许的位移与接触信息。
+## 从给定起点检测位移。可通过 result 读取允许的位移和接触信息，物理体仍在原位。
 ## 开启 recovery_as_collision 后，为解除初始重叠而发生的接触也会被报告为碰撞。
 static func probe_body(rid: RID, from: Transform2D, motion: Vector2,
 		result: PhysicsTestMotionResult2D = null, margin: float = MOTION_MARGIN,
@@ -68,8 +68,8 @@ var _corridor := RectangleShape2D.new()
 func _init(size: Vector2) -> void:
 	map_size = size
 
-## 计算在地图两侧放置同一个角色碰撞形状所需的偏移量。
-## 零偏移放在第一项，表示当前位置。若靠近边角，还包括沿两个轴同时平移的偏移量。
+## 计算当前角色碰撞形状跨边缘的平移偏移量。
+## 第一项为零偏移，表示当前位置。靠近角落时，还包括沿两轴平移的偏移量。
 func mirror_offsets(position: Vector2) -> PackedVector2Array:
 	var size := map_size
 	var reach := (size * 0.5).min(Vector2.ONE * (SEAM_REACH + MIRROR_MARGIN))

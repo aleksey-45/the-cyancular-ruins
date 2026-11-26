@@ -48,7 +48,7 @@ func record(delta: float, at: int, sample: Callable) -> void:
 	var first := 0
 	while first < _samples.size() and _samples[first][Sample.TIME] < time - _seconds:
 		first += 1
-	# 已提交检查点和编解码基准共享这里的不可变记录。
+	# 检查点和快照编码基线也引用当前数组，新增样本前复制数组以保留已有记录。
 	_samples = _samples.slice(first)
 	_samples.append([at, time] + values)
 

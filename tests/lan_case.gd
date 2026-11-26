@@ -50,7 +50,7 @@ func run(_tree: SceneTree) -> void:
 	expect(discovery.rooms(now + 1.0 + LanDiscovery.TTL + 0.1).is_empty(),
 			"expired room is not listed")
 
-	# UDP 监听不参与自动测试(绑定固定端口会与并行测试冲突),只验证未监听时的安全行为。
+	# 绑定固定端口可能与并行测试冲突，这里验证未监听时的返回值。
 	var idle := LanDiscovery.new()
 	expect(not idle.poll(0.0), "poll without listening reports no change")
 	idle.stop()

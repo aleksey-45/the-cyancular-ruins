@@ -15,7 +15,7 @@ var gravity_factor: float
 var traveled := 0.0
 var fuse_elapsed := 0.0
 var fuse_duration := 0.0
-# 记录榴弹是否已经造成过直击伤害，供快照恢复，避免预测回滚后重复结算直接命中。
+# 快照保存榴弹的直击记录，使预测回滚恢复后仍可判断直击是否已结算。
 var direct_hit := false
 
 var impact_point := Vector2.ZERO
@@ -76,8 +76,8 @@ func advance_physics(delta: float) -> AdvanceResult:
 	PerformanceStats.end(PerformanceStats.PROJECTILE_STEP, started)
 	return result
 
-## 移动时分段检查弹丸的整条路径。如果路径穿过地图边缘，就从另一侧接着检查。
-## 每段距离不超过地图边缘已覆盖的碰撞范围。
+## 沿位移分段扫掠，每段长度不超过地图边缘的碰撞覆盖范围。
+## 每段移动后将位置归入地图范围，下一段可从地图另一侧继续。
 func _sweep(step: Vector2) -> AdvanceResult:
 	var length := step.length()
 	if length <= 0.0:

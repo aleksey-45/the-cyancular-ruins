@@ -6,11 +6,11 @@ const Meta := preload("res://core/config/tunnel_meta.gd")
 
 # 房间号由八位数字组成。它按字符串处理，以保留前导零。
 const ROOM_DIGITS := 8
-# 客户端等待房主出现在 EasyTier 节点列表中的时间上限（毫秒）。
+# 客户端等待房主出现在 EasyTier 节点列表中的默认超时（毫秒）。
 const CLIENT_WAIT_MS := 60000
-# 查询节点列表或重试 UDP 转发前，等待这么多秒。
+# 查询节点列表和重试 UDP 转发的间隔（秒）。
 const POLL_INTERVAL := 1.0
-# 找到房主后，最多尝试这么多次建立 UDP 转发规则。
+# 建立 UDP 转发规则的尝试次数上限。
 const FORWARD_TRIES := 3
 
 static var _pid := 0            # 记录当前 EasyTier 进程的 ID。未启动或已清除状态时为 0。
@@ -143,7 +143,7 @@ static func _forward_to(port: int, host_ip: String) -> String:
 	return "已找到房主，UDP 转发配置失败%s" % detail
 
 
-## 游戏客户端通过此端口发送交给 EasyTier 转发的数据。尚未配置转发时得到 0。
+## 返回供游戏客户端连接的本地 UDP 转发端口。尚未配置转发时返回 0。
 static func forward_port() -> int:
 	return _forward_port
 
@@ -237,7 +237,7 @@ static func parse_relay_lines(text: String) -> Array[String]:
 	return out
 
 
-## 打包成 macOS 应用后，从用户数据目录读取初始节点列表。其他版本和 EasyTier 组件放在同一目录。
+## macOS 应用包的初始节点列表位于用户数据目录，其余运行方式使用 EasyTier 组件目录。
 static func relay_file() -> String:
 	if OS.has_feature("macos") and OS.has_feature("template"):
 		return OS.get_user_data_dir().path_join(Meta.RELAY_FILE_NAME)

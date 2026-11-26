@@ -59,8 +59,8 @@ func close() -> void:
 	for role: int in players.keys():
 		remove_player(role)
 
-## 输入按角色 ID 处理。角色全部移动后才发射，当帧生成的弹丸参加本帧的运动。
-## 以当前战斗帧末的地形开始，结束时记录下一帧的地形改动。
+## 按角色 ID 处理输入。角色全部移动后再处理攻击，当帧生成的弹丸可在本帧移动。
+## 查询使用最近一次提交的地形碰撞，本步地形改动统一在步末提交。
 func step(inputs: Dictionary) -> Dictionary:
 	destroyed_subcells.clear()
 	var reversing := time_field != null and time_field.is_rewinding()
@@ -147,7 +147,7 @@ func clear() -> void:
 	beams.clear()
 	pending_blasts.clear()
 
-## 结算画面保留在场攻击。待结算的伤害随对局结束。
+## 结算画面保留在场的弹丸和光束，待结算的爆炸在对局结束时清除。
 func finish_match() -> void:
 	pending_blasts.clear()
 

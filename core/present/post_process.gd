@@ -19,7 +19,7 @@ var _haste_dim := 0.0
 const LOW_HP_THRESHOLD := 0.35
 const LOW_HP_RATE := 2.0
 
-# 可见范围以视口中心为基准，宽高分别按窗口与世界视口的尺寸比计算。
+# 裁切以世界视口的中心为基准，宽高比例分别由外层视口与世界视口的尺寸决定。
 static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
 	return Vector2(win_size.x / world_vp_size.x, win_size.y / world_vp_size.y)
 
@@ -59,7 +59,7 @@ func set_downed(v: bool) -> void:
 		_mat.set_shader_parameter("desat", 1.0 if v else 0.0)
 
 
-## 计算低生命值暗角的目标强度。每帧逐步调整到该值。
+## 设置低生命值暗角的目标强度，显示强度在接下来的渲染帧中逐步过渡。
 func set_health_ratio(hp: int, max_hp: int) -> void:
 	var ratio := 0.0 if max_hp <= 0 else clampf(float(hp) / float(max_hp), 0.0, 1.0)
 	_low_hp_target = clampf((LOW_HP_THRESHOLD - ratio) / LOW_HP_THRESHOLD, 0.0, 1.0)
@@ -81,7 +81,7 @@ func show_display(values: Array) -> void:
 func set_intro_rewind(elapsed: float, strength: float) -> void:
 	_mat.set_shader_parameter(&"intro_rewind", Vector2(elapsed, strength))
 
-## 更新时间技能滤镜并返回回溯效果的过渡进度。单人模式将回溯效果应用到世界画面，多人模式用返回值绘制地形图层。
+## 更新时间技能滤镜并返回回溯效果的过渡进度。单人模式对整个世界画面应用回溯滤镜，联机对局用返回值更新地形上的回溯滤镜。
 func advance_time(delta: float, rewinding: bool, haste: bool, loan: float, fullscreen: bool) -> float:
 	_rewind_coverage = move_toward(_rewind_coverage, 1.0 if rewinding else 0.0, delta / 0.2)
 	_haste_dim = move_toward(_haste_dim, 1.0 if haste else 0.0, delta / 0.1)
@@ -102,6 +102,6 @@ func _process(delta: float) -> void:
 			_mat.set_shader_parameter("low_hp", _low_hp)
 	_heartbeat_cd = maxf(_heartbeat_cd - delta, 0.0)
 	if _low_hp >= LOW_HP_THRESHOLD * 0.999 and _heartbeat_cd <= 0.0 and not get_tree().paused:
-		# 心跳音效由已显示的暗角强度触发，暗角越深，心跳越快。
+		# 心跳节奏跟随画面上暗角的强度，暗角越深，心跳越快。
 		Sfx.play("heartbeat", 1.0, -6.0)
 		_heartbeat_cd = lerpf(1.2, 0.6, _low_hp)

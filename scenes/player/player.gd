@@ -56,7 +56,7 @@ var equipped: GunBody:
 	get: return weapons.equipped
 # 最多容纳四个碰撞形状，一个用于原位置，其余用于地图边缘和角落。
 const COLLISION_SLOTS := 4
-# 纵向移动结束后，空中补抬仍需读取横向碰撞结果。
+# 纵向移动结束后，空中攀上台阶的探测仍会读取横向碰撞结果。
 static var _horizontal_motion := PhysicsTestMotionResult2D.new()
 static var _vertical_motion := PhysicsTestMotionResult2D.new()
 static var _step_motion := PhysicsTestMotionResult2D.new()

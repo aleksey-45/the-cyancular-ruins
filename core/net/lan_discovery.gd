@@ -1,9 +1,8 @@
 class_name LanDiscovery
 extends RefCounted
 
-# 局域网房间发现:广播包的编解码 + 接收端注册表(TTL/去重) + 客户端 UDP 监听。
-# 房主侧每秒广播一次(见 LanBeacon),客户端侧监听同一 UDP 端口(见 docs/netplay.md)。
-# 编解码与注册表保持纯逻辑,方便测试;UDP 监听不参与自动测试。
+# 监听 LanBeacon 发出的局域网房间广播，按房间号去重并移除过期条目。
+# 编解码和房间列表更新可脱离 UDP 监听单独测试。
 
 const PORT := 7788
 const INTERVAL := 1.0
@@ -11,7 +10,7 @@ const TTL := 3.0
 const MAX_PACKET := 1024
 const VERSION := 1
 const MODES := ["pvp", "team", "royale"]
-# 单次 poll 最多处理的包数,避免广播风暴占满一帧。
+# 限制每次轮询处理的数据报数量，避免广播流量过高时占用整帧。
 const MAX_PACKETS := 64
 
 var _rooms: Dictionary = {}
@@ -51,7 +50,7 @@ static func decode_room(packet: PackedByteArray) -> Dictionary:
 	return data
 
 
-## 校验广播包字段;编码前与接收后共用同一套判据。
+## 编码前和接收后使用相同的规则校验广播字段。
 static func is_valid_room(data: Dictionary) -> bool:
 	if data.has("v") and int(data["v"]) != VERSION:
 		return false
@@ -81,7 +80,7 @@ static func valid_code(code: String) -> bool:
 	return true
 
 
-## 读整数字段;缺失/非整数/越界返回 -1。
+## 读取整数字段。缺失、非整数或超出范围时返回 -1。
 static func _int_field(data: Dictionary, key: String, low: int, high: int) -> int:
 	var value: Variant = data.get(key, null)
 	if value == null or not (value is float or value is int):
@@ -95,7 +94,7 @@ static func _int_field(data: Dictionary, key: String, low: int, high: int) -> in
 	return result
 
 
-## 收到一包:刷新注册表;返回信息是否有变化(用于刷新 UI)。
+## 根据收到的广播刷新房间记录，返回房间信息是否有变化。
 func update(info: Dictionary, source_ip: String, now: float) -> bool:
 	var code := str(info.get("code", ""))
 	if not is_valid_room(info):
@@ -107,7 +106,7 @@ func update(info: Dictionary, source_ip: String, now: float) -> bool:
 	return changed
 
 
-## 当前仍有效的房间(按房号排序);过期条目顺带清掉。
+## 清除过期条目，按房间号排序返回仍有效的房间。
 func rooms(now: float) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for code in _rooms.keys():
@@ -123,7 +122,7 @@ func rooms(now: float) -> Array[Dictionary]:
 	return out
 
 
-## 清掉过期房间;返回是否有条目被移除。
+## 移除过期房间，返回列表是否有变化。
 func expire(now: float) -> bool:
 	var removed := false
 	for code in _rooms.keys():
@@ -137,7 +136,7 @@ func clear() -> void:
 	_rooms.clear()
 
 
-## 绑定 0.0.0.0:PORT 开始接收广播;端口被占用等失败时返回错误,不崩溃。
+## 绑定 0.0.0.0:PORT 接收广播。绑定失败时返回错误码。
 func listen() -> Error:
 	stop()
 	var socket := PacketPeerUDP.new()
@@ -148,7 +147,7 @@ func listen() -> Error:
 	return OK
 
 
-## 停止监听并释放端口;未监听时无操作。
+## 停止监听并释放端口。可以重复调用。
 func stop() -> void:
 	if _socket == null:
 		return
@@ -156,7 +155,7 @@ func stop() -> void:
 	_socket = null
 
 
-## 收取已到达的广播并刷新注册表;返回注册表是否有变化。未监听时直接返回 false。
+## 接收广播并更新房间列表。列表变化时返回 true，未监听时返回 false。
 func poll(now: float) -> bool:
 	if _socket == null:
 		return false

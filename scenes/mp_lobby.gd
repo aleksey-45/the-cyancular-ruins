@@ -1,6 +1,6 @@
 extends Node
 
-# 大厅:轮询局域网广播刷新房间卡片;卡片带房主端点,可直接加入。
+# 联机大厅根据局域网广播刷新房间列表。点击卡片后，优先尝试直连房间服务器。
 
 const POLL_INTERVAL := 0.1
 
@@ -61,7 +61,6 @@ func _name_changed(text: String) -> void:
 
 func _back() -> void:
 	NetSession.close()
-	# 回主菜单是轻场景,SceneTransition 会附短遮罩(process_mode=ALWAYS + 输入拦截)。
 	SceneTransition.change(get_tree(), "res://scenes/main_menu.tscn")
 
 func _set_filter(mode: String) -> void:
@@ -91,7 +90,7 @@ func _request(message: String, send: Callable) -> void:
 	if is_inside_tree() and not error.is_empty():
 		_view.set_status(error)
 
-## 带着有效凭据回到大厅时先尝试回到对局;失败就留在局域网列表。
+## 持有效重连凭据回到大厅时先尝试恢复对局连接，失败则留在房间列表。
 func _auto_rejoin() -> void:
 	_request("正在重连到对局…", func() -> String:
 		var error := await NetSession.rejoin_room()

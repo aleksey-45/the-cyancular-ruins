@@ -36,7 +36,7 @@ func advance(view: float, latest: int, delta: float) -> float:
 		_next_update = _elapsed + 15.0
 	if _elapsed >= _next_sample:
 		_ages.append(Vector2(_elapsed, now - latest))
-		# 高频显示器也保留有界的八秒窗口，正常的 60–144 Hz 渲染逐回调采样。
+		# 每 0.25 个模拟帧最多记一次样本，限制高刷新率下八秒窗口内的样本数。
 		_next_sample = _elapsed + 0.25
 	var error := now - _delay - (view + dt)
 	return minf(view + dt * clampf(1.0 + error / 6.0, 0.85, 1.10), latest + MAX_EXTRAPOLATION)

@@ -1,10 +1,6 @@
 extends Control
 
-# 主菜单(设计系统 v2):静态骨架在 scenes/main_menu.tscn(从 main 的生成器骨架迁移),
-# 本文件只做三件事:把 UiDesign token 补到骨架上、接 siri 原有导航、播入场动画。
-# ★ 保留 siri 功能与行为:单人开局 SpLaunchPanel(initial_map / disabled / play_requested /
-#   show_error 全保留)、多人走 LAN 大厅、Beta、地图编辑器、设置、信息、退出、--server 直通服务端。
-# ★ 不写 StyleBox / Color 字面量 / 绝对坐标;导航目标与原 siri 完全一致。
+# 主菜单布局定义在 main_menu.tscn 中。脚本设置标题与版本号，连接菜单操作并播放入场动画。
 
 const SP_PANEL := preload("res://ui/screens/sp_launch_panel.tscn")
 const LOBBY := "res://scenes/mp_lobby.tscn"
@@ -29,7 +25,6 @@ func _ready() -> void:
 	_play_emerge()
 
 
-# 颜色/字号全部引 UiDesign token;.tscn 里只有结构,没有样式字面量。
 func _style_page() -> void:
 	_bg.color = UiDesign.C_BG
 	_sep_a.color = UiDesign.C_BORDER_DIM
@@ -65,7 +60,7 @@ func _menu_sequence() -> Array:
 	return seq
 
 
-# 入场动画沿用 siri 旧版节奏:标题先淡入,按钮组随后逐项淡入。
+# 标题和版本号先淡入，按钮随后依次淡入。
 func _play_emerge() -> void:
 	_title.modulate.a = 0.0
 	_version.modulate.a = 0.0

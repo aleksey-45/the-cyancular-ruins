@@ -139,7 +139,7 @@ func snapshot() -> PackedInt32Array:
 
 func restore(inst: int, entries: PackedInt32Array, values: Array, rewind: bool) -> void:
 	if rewind:
-		# 回溯时背包中的武器种类保持不变，只把仍然持有的武器的弹药恢复到历史值。
+		# 按实例 ID 将历史弹药量恢复到当前仍持有的武器。
 		for at in range(0, entries.size(), STRIDE):
 			var owned := _find(entries[at + INST])
 			if not owned.is_empty():

@@ -62,7 +62,7 @@ func _build() -> String:
 		_scatter_weapons()
 	return ""
 
-## 模拟帧号持续递增。单人世界回溯只调整战斗时间和历史读取位置。
+## 单人世界回溯会恢复战斗时钟和历史状态，模拟帧号继续递增。
 func advance(inputs: Dictionary, commands: Array = []) -> void:
 	if rules != null and rules.phase == Phase.MATCH_OVER:
 		return
@@ -151,7 +151,7 @@ func _add_player(role: int) -> Player:
 	player.sim_max_hp = TeamRules.max_hp(player.team, combat.team_counts)
 	return player
 
-## 采集当前帧的表现数据。角色为 0 时采集整个世界。
+## 采集当前帧的表现数据。only_role 用于筛选玩家及其攻击，传入 0 时采集整个世界。
 func sample(only_role := 0) -> Dictionary:
 	var actors := combat.capture_players() if only_role == 0 else {only_role: players[only_role].capture_state()}
 	var enemies := []

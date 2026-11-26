@@ -17,7 +17,7 @@ var ratio := 1.0:
 
 
 func _draw() -> void:
-	# 底槽比条每边外扩 BORDER_W,保证浅色地形上也能读出条的位置。
+	# 底槽超出填充区域一圈，使血条的轮廓在浅色地形上清晰可辨。
 	var pad := Vector2(UiDesign.BORDER_W, UiDesign.BORDER_W)
 	var back := Rect2(-SIZE * 0.5 - pad, SIZE + pad * 2.0)
 	draw_rect(back, C_BACK)

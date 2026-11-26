@@ -1,7 +1,7 @@
 class_name Terrain
 extends RefCounted
 
-# 地形引用原图的子格描述，维护当前耐久、碰撞和线性撤销日志。
+# 子格材质来自地图场景层。地形记录当前耐久度、碰撞形状和撤销日志。
 
 const SUB_SIZE := CyrmMap.CELL_SIZE
 const DAMAGE_BLOCK_SUBS := 32 / SUB_SIZE
@@ -36,7 +36,7 @@ var _chunk_columns := 0
 var _chunk_dirty := PackedByteArray()
 var _dirty_chunks := PackedInt32Array()
 var physics: CollisionWorld
-# 每块区域的碰撞合并到一个物理体。数组最后两项预留给可站立的铁链和不可破坏的墙壁。
+# 每个碰撞分块使用一个物理体。最后两项存放铁链端部的平台和不可破坏墙体。
 var _chunks: Array[Chunk] = []
 var _shape_rids: Dictionary = {}
 var _placements: Array = []
@@ -248,7 +248,7 @@ func _occupancy_changed(index: int, before: int) -> void:
 	if TileDefs.ledges[tex] != 0:
 		ledges_dirty = true
 
-## 伤害立即扣除耐久，返回实际破坏的子格数。占用变化在 commit() 时发布。
+## 立即扣除耐久度并返回破坏的子格数。commit() 更新碰撞和渲染记录。
 func damage_impact(position: Vector2, normal: Vector2, amount: int) -> int:
 	if empty() or amount <= 0:
 		return 0
@@ -316,7 +316,7 @@ func reset() -> void:
 		_write_hp(i, TileDefs.hit_points[_material(i)])
 	commit()
 
-## 返回相对保留版本 at 的非零差异，耐久值取当前绝对值。
+## 返回相对版本 at 发生变化的子格及其当前耐久度，破坏的子格值为 0。
 func changes_since(at: int) -> Dictionary:
 	var cells := {}
 	var originals := _originals_since(at)
@@ -408,7 +408,7 @@ func _lay_shapes(rects: Array) -> void:
 					var center := rect.position + Vector2(x, y) * map_size
 					_placements.append([shape, Transform2D(0.0, center)])
 
-# 数量相同就更新物理体上的已有形状。必须增减形状时，再清空形状列表并重新添加。
+# 形状数量相同时更新已有形状，数量变化时重建形状列表。
 func _submit(chunk: Chunk, signature: PackedByteArray, rects: Array) -> void:
 	var body := chunk.body
 	if not body.is_valid():
@@ -526,7 +526,7 @@ func commit() -> void:
 	_finish_commit(_pending)
 	_pending = {}
 
-## 在提交之间使用。保留 at 及其前缀，覆盖 cells 指定的绝对耐久。
+## 基于已提交的版本 at 应用地形补丁。cells 提供各子格的绝对耐久度。
 func apply_at(at: int, cells: Dictionary) -> int:
 	if at == version and cells.is_empty():
 		return version

@@ -164,7 +164,7 @@ func _write_input(s: StreamPeerBuffer, packet: Array) -> void:
 	var previous: Array = []
 	for frame: Array in frames:
 		s.put_u32(frame[InputBuffer.SEQ])
-		# 在包内对 P-seq 做增量。稳定时四份冗余输入共用一个偏移。
+		# 在包内对目标帧与输入序号之差做增量编码。时钟稳定时，四份冗余输入共用一个偏移。
 		var encoded := frame.duplicate()
 		encoded[InputBuffer.TARGET_TICK] -= frame[InputBuffer.SEQ]
 		_put_delta(s, encoded, previous, INPUT_FRAME_TYPES, InputBuffer.TARGET_TICK)
@@ -451,7 +451,7 @@ static func _equipment_base(state: Array, old: Array) -> Array:
 		return []
 	return old[PlayerSlots.EQUIPMENT]
 
-## 已确认窗口和当前窗口共用连续的一段采样，其余只发送新追加的行。
+## 复用已确认快照与当前快照重叠的连续历史采样，再编码新追加的采样。
 static func _write_histories(s: StreamPeerBuffer, current: Dictionary, base: Dictionary) -> void:
 	s.put_u16(current.size())
 	for role: int in current:

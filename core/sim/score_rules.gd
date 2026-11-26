@@ -1,7 +1,7 @@
 class_name ScoreRules
 extends RefCounted
 
-# 多人模式使用同一套战斗计分。ACS 表示每回合平均获得的战斗分。
+# 联机模式共用战斗评分规则。总战斗评分除以回合数得到 ACS。
 
 const KILL_SCORE := 100
 const ASSIST_SCORE := 50

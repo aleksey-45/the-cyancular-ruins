@@ -15,7 +15,7 @@ func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	custom_minimum_size = Vector2(PANEL_W, row_height(1))
 
-## 布局 = WeaponInventory.cell_layout()：[当前武器索引, 背包容量, (类型, 占格数)×N]。
+## 布局 = WeaponInventory.layout()：[当前武器索引, 背包容量, (类型, 占格数)×N]。
 func show_inventory(layout: PackedInt32Array) -> void:
 	_layout = layout
 	var capacity := _capacity()

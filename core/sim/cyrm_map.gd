@@ -9,7 +9,7 @@ const CELL_SIZE := 16
 const MAX_SIZE := Vector2i(1600, 1200)
 const NEUTRAL_TINT := Vector4i(4, 4, 4, 7)
 
-# 所有坐标均为 16 像素子格。点位的键是全图唯一的编辑编号。
+# 地图字典的坐标以 16×16 像素子格为单位。每个点位的 ID 在本图内唯一。
 static func create(size: Vector2i) -> Dictionary:
 	if not _valid_size(size): return {}
 	var layers: Array[PackedInt32Array] = []
@@ -28,7 +28,7 @@ static func world_position(at: Vector2i) -> Vector2:
 static func cell_at(map: Dictionary, layer: int, at: Vector2i) -> int:
 	return map.layers[layer][at.y * map.size.x + at.x]
 
-# 一笔修改连续存放 x、y、值，每格 12 字节。
+# 每个子格改动依次存储 x、y 和新值，占 12 字节。
 static func append_cell(changes: PackedInt32Array, x: int, y: int, value: int) -> void:
 	changes.append(x)
 	changes.append(y)
@@ -102,7 +102,7 @@ static func from_bytes(file: PackedByteArray) -> Dictionary:
 			if value != 0 and (value < 0x1000 or value > 0xFFFFFF or not TileDefs.has_texture(tile_material(value))): return {}
 	return map
 
-## 同目录临时文件写完后替换目标。
+## 先完整写入同目录的临时文件，再替换目标文件。
 static func save_file(map: Dictionary, path: String) -> Error:
 	if path.is_empty() or path.begins_with("res://"): return ERR_INVALID_PARAMETER
 	var bytes := to_bytes(map)

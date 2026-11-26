@@ -4,9 +4,7 @@ extends RefCounted
 # 创建容器和通用控件，布局使用 UiDesign 的间距常量，样式来自主题类型变体。
 # 控件布局与样式约定见 docs/construction/2026-11-23-ui-full-replacement-plan.md 的「实现约定」。
 
-# ── 页面骨架 ────────────────────────────────────────────────────────────────
-
-## 页面根:给 parent 挂一个 MarginContainer(SP_6)→ VBox(SP_5),返回 VBox 供页面填内容。
+## 添加铺满父控件的边距容器，返回其中的页面内容容器。
 static func page(parent: Control, margin: int = UiDesign.SP_6, gap: int = UiDesign.SP_5) -> VBoxContainer:
 	var margin_box := MarginContainer.new()
 	margin_box.name = "Page"
@@ -23,7 +21,7 @@ static func page(parent: Control, margin: int = UiDesign.SP_6, gap: int = UiDesi
 	return vb
 
 
-## 顶部工具条:给 parent 挂一个 Bar 面板 + Margin(SP_4) + HBox(SP_3),返回 HBox 供调用方加按钮。
+## 添加顶部工具栏，返回用于放置按钮的水平容器。
 static func toolbar(parent: Control) -> HBoxContainer:
 	var barrier := MarginContainer.new()
 	barrier.add_theme_constant_override("margin_left", UiDesign.SP_4)
@@ -40,7 +38,7 @@ static func toolbar(parent: Control) -> HBoxContainer:
 	return row
 
 
-## 底部状态条:Bar 面板 + HBox(SP_3),返回 HBox;文本用 UiDesign.ui_label(..., "dim")。
+## 添加底部状态栏，返回用于放置状态文字等控件的水平容器。
 static func status_bar(parent: Control) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.name = "StatusBar"
@@ -57,7 +55,7 @@ static func status_bar(parent: Control) -> HBoxContainer:
 	return row
 
 
-## 卡片:Card 面板 + VBox(SP_3) + H2 标题;返回 body VBox 供调用方填内容。
+## 添加带可选标题的卡片，返回其中的内容容器 Body。外层面板是 Body 的三级父节点。
 static func card(parent: Control, title: String = "") -> VBoxContainer:
 	var panel := UiDesign.ui_panel("card")
 	parent.add_child(panel)

@@ -2,7 +2,7 @@ class_name LobbyRoomCard
 extends Button
 
 # 局域网房间卡片。悬停、按下和禁用样式来自 RowButton 主题类型变体。
-# 子控件忽略鼠标输入，整张卡片可点击。点击后，控制器根据广播中的服务器地址尝试直连。
+# 子控件忽略鼠标输入，整张卡片可点击。控制器根据房间发现结果中的服务器地址和端口尝试直连。
 
 signal join_requested(code: String, endpoint: Dictionary)
 
@@ -100,7 +100,7 @@ func present(info: Dictionary) -> void:
 	_code.text = str(info.get("code", ""))
 	_count.text = "人数 %d / %d" % [int(info.get("players", 0)), int(info.get("max", 0))]
 	_fit_height()
-	# 控件加入场景树后，在下一帧按主题字体重新测量内容。
+	# 延迟按场景树中生效的主题字体重新测量内容。
 	_fit_height.call_deferred()
 
 

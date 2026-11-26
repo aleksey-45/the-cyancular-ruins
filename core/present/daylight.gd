@@ -7,16 +7,16 @@ const PALETTE: Image = preload("res://core/present/daylight_palette.png")
 const HORIZON := preload("res://core/present/sky_gradient.tres")
 
 var overscan_y := 1.0
-## X/Y 指向当前光源，Z 是太阳在地平线以上的高度。
+## X、Y 指向当前的日光或月光光源。Z 表示太阳的相对高度，地平线以下为 0，正午为 1。
 var directional_light := Vector3(0, -1, 1)
-## RGB 是日月颜色，Alpha 控制光源在地平线附近的淡入淡出。
+## RGB 记录光源颜色，Alpha 控制日光或月光在地平线附近的淡入淡出。
 var directional_color: Color
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 
-## 天顶色也是地形与角色的环境光。
+## 更新天空并返回天顶色，供地形与角色作为环境光颜色使用。
 func set_minute(minute: float) -> Color:
 	var phase := fposmod(minute / DAY, 1.0)
 	var column := phase * PALETTE.get_width()

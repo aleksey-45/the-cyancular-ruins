@@ -1,7 +1,7 @@
 class_name BlastCurve
 extends RefCounted
 
-# 爆炸范围内圈使用最大值。内圈以外，效果随距离的平方减弱，到爆炸边缘时降为零。角色和地形共用这一计算。
+# 角色与地形共用爆炸衰减曲线。内圈取最大值，外圈按归一化距离做二次衰减，在爆炸边缘降为零。
 const INNER_FRACTION := 0.4
 
 static func falloff(distance: float, radius: float, inner: float, maximum: float) -> float:

@@ -31,7 +31,7 @@ static func floor_cells(map: Dictionary) -> Array[Vector2i]:
 				floors.append(Vector2i(x, y))
 	return floors
 
-## 打乱顺序后，取第一个距离足够的点。距离都不足时，选最近威胁最远的点。
+## 从满足间距的候选点中随机选取。间距都不足时，选离最近的避让目标最远的点。
 static func pick(pool: Array, occupied: Array[Vector2i], avoid: Array[Vector2i], size: Vector2i,
 		rng: RandomNumberGenerator) -> Vector2i:
 	var candidates := pool.duplicate()
@@ -67,7 +67,7 @@ static func player_limit(sides: Dictionary, mode: String, options := {}) -> int:
 	var per_side := TeamRules.MAX_TEAM if mode == WorldSpec.TEAM else 1
 	return limit if mini(a, b) >= per_side else 0
 
-## 联机开局校验地图标注的复活点，包括净空、支撑和连通性。
+## 校验联机复活点的坐标、站立空间、脚下支撑和点位连通性。
 static func validate_multiplayer_spawns(map: Dictionary) -> String:
 	TileDefs.load_defs()
 	var descriptors: PackedInt32Array = map.layers[CyrmMap.SCENE]

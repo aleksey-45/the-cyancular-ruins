@@ -1,11 +1,6 @@
 extends Control
 
-# 信息页(设计系统 v2):结构从 main 的 scenes/info_menu.gd 迁移 —— 容器优先、零绝对坐标,
-# 版式 = UiKit.page → 两栏 UiKit.card;标题/空态/致谢行只用 UiDesign 的 token 与 variation。
-# ★ 保留 siri 内容与行为:开发团队/致谢原文、版本行读 release_prefix、GitHub 提交记录异步拉取
-#   (CommitHistory.fetch)、读不到时的兜底文案与 C_DANGER 配色、返回主菜单与 Esc 行为。
-# ★ 保留 main 的五个 unique name(%VersionLabel / %CommitList / %TeamBox / %CreditsBox / %BackBtn),
-#   运行时建的节点在末尾补 owner,`%Name` 才能解析。
+# 信息页显示版本、提交记录、开发团队与致谢。
 
 const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048",
 	"ofbwyx", "Lycoris Max", "hsk"]
@@ -42,15 +37,13 @@ func _ready() -> void:
 	_claim_owner(self)
 
 
-# 运行时建的节点要能被 `%Name` 解析(外部/autotest 可能按 unique name 找):补 owner。
+# 为运行时创建的节点设置 owner，让场景唯一名称可通过 %Name 查找。
 func _claim_owner(n: Node) -> void:
 	for c in n.get_children():
 		c.owner = self
 		_claim_owner(c)
 
 
-# 页面骨架:背景 + UiKit.page(Margin SP_6 → VBox SP_5)→ 标题 / 两栏 / 返回。
-# 左栏版本卡片吃掉剩余高度(提交列表滚动),右栏团队/致谢两张卡片按内容排。
 func _build_ui() -> void:
 	var bg := ColorRect.new()
 	bg.name = "Bg"
@@ -83,7 +76,7 @@ func _build_ui() -> void:
 	right.add_theme_constant_override("separation", UiDesign.SP_4)
 	columns.add_child(right)
 
-	# ── 左栏:版本 + 提交历史(唯一吃高度的一栏)──
+	# 版本卡片填充左栏的可用高度，提交记录在卡片内滚动。
 	var version_card := UiKit.card(left, "版本信息")
 	_card_frame(version_card).size_flags_vertical = Control.SIZE_EXPAND_FILL
 	version_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -103,7 +96,6 @@ func _build_ui() -> void:
 	_commit_list.add_theme_constant_override("separation", UiDesign.SP_2)
 	scroll.add_child(_commit_list)
 
-	# ── 右栏:团队 / 致谢(按内容排,不抢高度)──
 	var team_card := UiKit.card(right, "开发团队 / 特别感谢")
 	_team_box = VBoxContainer.new()
 	_team_box.name = "TeamBox"
@@ -127,14 +119,12 @@ func _build_ui() -> void:
 	footer.add_child(_back)
 
 
-# UiKit.card 返回的是 body;骨架 = Card(PanelContainer)→Margin→VBox→Body,
-# 需要给卡片本体设 size_flags 时往上三层拿(版式参数,不是样式)。
 func _card_frame(body: VBoxContainer) -> PanelContainer:
 	return body.get_parent().get_parent().get_parent() as PanelContainer
 
 
 func _fill_commits() -> void:
-	# siri 的提交历史来自 GitHub(异步);未返回前先占一行状态,失败沿用 siri 的兜底文案与 C_DANGER。
+	# 加载提示占用提交列表的一行。请求失败时在原处显示错误。
 	var status := _commit_row("正在读取 GitHub 提交记录…", UiDesign.C_TEXT_DIM)
 	_commit_list.add_child(status)
 	var rows := await CommitHistory.fetch(self)
@@ -149,7 +139,7 @@ func _fill_commits() -> void:
 		_commit_list.add_child(_commit_row(row, UiDesign.C_TEXT))
 
 
-# 提交行:16 号正文、宽度由滚动区决定,超长省略号截断。
+# 按滚动区域的宽度显示提交记录，超长文字用省略号截断。
 func _commit_row(text: String, color: Color) -> Label:
 	var row := UiDesign.label(text, UiDesign.T_SUB, color)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -158,7 +148,7 @@ func _commit_row(text: String, color: Color) -> Label:
 	return row
 
 
-# 返回主菜单的操作延迟执行,使本次输入回调能够先结束。
+# 延迟切换场景，让当前输入回调先完成。
 func _go_back() -> void:
 	Sfx.play("ui")
 	get_tree().change_scene_to_file.call_deferred("res://scenes/main_menu.tscn")

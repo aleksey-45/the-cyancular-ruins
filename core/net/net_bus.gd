@@ -56,7 +56,7 @@ func connect_local(port: int, timeout_ms: int, alive := Callable()) -> Error:
 	return await _connect_to("127.0.0.1", port, timeout_ms, alive)
 
 
-## 连接到任意地址的服务器（LAN 直连）。等待、取消与超时语义和 connect_local 相同。
+## 直接连接指定地址和端口。等待、取消与超时行为与 connect_local 相同。
 func connect_remote(ip: String, port: int, timeout_ms: int, alive := Callable()) -> Error:
 	return await _connect_to(ip, port, timeout_ms, alive)
 
@@ -165,7 +165,7 @@ func poll_messages() -> void:
 		return
 	var perf_poll := PerformanceStats.begin()
 	var generation := connection_generation
-	# 本物理帧收到的消息加入待处理队列，再与前面各帧积压的消息一起筛选。
+	# 新收到的消息与此前积压的消息一起合并和筛选。
 	var messages := _transport.poll(RECEIVE_BATCH_MESSAGES)
 	_pending_messages.append_array(messages)
 	messages = _filter_receive_backlog(_coalesce_messages(_pending_messages))
@@ -222,10 +222,8 @@ func _filter_receive_backlog(messages: Array) -> Array:
 	# 连接关闭后，过滤其尚未处理的游戏数据。连接状态通知仍交给分发流程。
 	return messages.filter(func(message: Array) -> bool: return message[0] != 0 or not rejected.has(message[1]))
 
-# 同一段队列里的快照可以跳过中间项，因为服务器以接收方已经确认的快照为基准计算增量。
-# 仅当一段消息由有效的 STATE 和 INPUT 组成时，才按连接合并 STATE，每个连接保留最新序号。
-# 可靠事件、连接通知和无法识别的消息都会结束当前的合并范围。
-# 这里保留 INPUT 的接收顺序，输入缓冲区再去掉重复记录。
+# 连续的 STATE 和 INPUT 消息中，每个连接仅保留序号最新的 STATE。较新的快照以已确认的快照为增量基准，可以跳过中间项。
+# 可靠事件、连接通知和无法识别的消息会截断这段队列。INPUT 保持接收顺序，由输入缓冲区去重。
 func _coalesce_messages(messages: Array) -> Array:
 	var result: Array = []
 	var latest := {}

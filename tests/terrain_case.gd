@@ -385,7 +385,7 @@ func _proxy_same_frame(tree: SceneTree) -> void:
 	actor.sync_collision_geometry()
 	expect(not world.ray_hit(Vector2(512, 380), Vector2(512, 700), mask).is_empty(),
 			"moving the body back restores the original query result")
-	# 当角色在地图边缘蹲下时，位于地图另一端的碰撞形状也要使用蹲姿。
+	# 角色在地图边缘蹲下时，地图另一端的碰撞副本也会切换为蹲姿。
 	actor.position = Vector2(10, 512)
 	actor.sync_collision_geometry()
 	var rid := actor.rid

@@ -1,7 +1,7 @@
 class_name LobbyView
 extends Control
 
-# 联机大厅视图。点击局域网房间卡片时，通过信号把房间号与主机端点交给控制器。
+# 点击局域网房间卡片时，大厅视图通过信号把房间号、服务器地址和端口交给控制器。
 
 signal nickname_changed(text: String)
 signal filter_changed(mode: String)

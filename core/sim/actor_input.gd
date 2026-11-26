@@ -1,8 +1,8 @@
 class_name ActorInput
 extends RefCounted
 
-# 本地输入与联机输入共用一组字段，模拟每个物理帧时读取对应的记录。
-# 限制操作期间只保留瞄准方向，按键、移动和换武器输入都不参与模拟。
+# 本地输入与联机输入共用此格式，每个模拟步读取对应的记录。
+# 输入锁定时保留瞄准方向，其余字段按空输入处理。
 const AX: int = 0
 const HELD: int = 1
 const PRESSED: int = 2

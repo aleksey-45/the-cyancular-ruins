@@ -1,7 +1,7 @@
 class_name MatchRules
 extends RefCounted
 
-# 联机模式共用地图出生点，本类负责分配地图侧、推进回合和计分。
+# 按对战模式分配地图出生点、推进回合和计分。
 enum Phase { COUNTDOWN, PLAYING, ROUND_OVER, MATCH_OVER, WAITING }
 enum State { PHASE, NUMBER, TIMER, MATCH_TIME, SPAWNS, SCORES, WINS, ROUND_WINNER, WINNER, ROSTER }
 const RESPAWN_TICKS := 120

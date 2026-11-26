@@ -142,7 +142,7 @@ func _mount_backgrounds(viewport: SubViewport, map: Dictionary, margin: Vector2)
 		sprite.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 		sprite.centered = false
 		sprite.region_enabled = true
-		# 纹理周期与滚动速度同比缩放，镜头绕地图一圈后仍落在同一像素。
+		# 纹理的平铺周期和视差滚动速度按同一比例缩放，摄像机绕地图一周后背景仍然对齐。
 		sprite.scale = plane.scroll_scale * CyrmMap.CELL_SIZE
 		var border := (margin / sprite.scale).ceil()
 		sprite.region_rect = Rect2(-border, Vector2(map.size) + 2 * border)

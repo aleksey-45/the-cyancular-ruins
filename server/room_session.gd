@@ -142,7 +142,7 @@ func max_players() -> int:
 func map_path() -> String:
 	return str(options.get("map", "res://maps/newfactory.cyrm"))
 
-# 团队模式为新加入的玩家自动分队。人数相等时优先安排到 A 队，否则选人数较少的一队。
+# 团队模式将新玩家分到人数较少的一队。人数相同时优先选尚有空位的 A 队。
 func add_seat(peer: int) -> void:
 	var role := 1
 	while seats.has(role):
@@ -185,7 +185,7 @@ func _pick_team(peer: int, role: int, team: int) -> void:
 		seats[role]["team"] = team
 		broadcast_room()
 
-# 房间状态同步名单、队伍和房主的角色 ID。客户端可以据此显示房主身份及各队成员。
+# 房间状态包含玩家名单、分队和房主角色 ID，供客户端更新大厅界面。
 func room_data() -> Dictionary:
 	var roster: Array = []
 	for role in seats:
@@ -204,7 +204,7 @@ func broadcast_room(only_role: int = 0) -> void:
 			var payload := base.merged({"your_role": role, "token": seat["token"]})
 			NetBus.send_event(NetEvent.Kind.ROOM, payload, seat["peer"])
 
-# 建房成功后启动局域网广播；lan_public 为 false 时完全不广播。
+# 建房成功后按房间选项 lan_public 决定是否启动局域网广播。
 func _start_beacon() -> void:
 	_stop_beacon()
 	if not bool(options.get("lan_public", true)):

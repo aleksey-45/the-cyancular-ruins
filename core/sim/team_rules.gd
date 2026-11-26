@@ -38,7 +38,7 @@ static func total_players(counts: Dictionary) -> int:
 static func team_difference(counts: Dictionary) -> int:
 	return absi(int(counts[1]) - int(counts[2]))
 
-## 对局共有几名玩家，就在这个人数上加 3 得到获胜所需的击杀数，结果限制在 5 到 13 之间。
+## 回合目标分为玩家总数加 3，取值范围为 5–13。
 static func kills_to_win(total: int) -> int:
 	assert(total >= MIN_TEAM * 2 and total <= MAX_TOTAL, "TeamRules: 总人数 %d 超出 2~%d" % [total, MAX_TOTAL])
 	return clampi(total + 3, 5, 13)

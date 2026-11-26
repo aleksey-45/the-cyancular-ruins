@@ -1,9 +1,8 @@
 class_name LanBeacon
 extends RefCounted
 
-# 建房后，服务器按 LanDiscovery 定义的格式向 UDP 7788 端口广播房间信息。
-# 每轮向 IPv4 受限广播地址和按 /24 推算的广播地址分别发送，失败时等下一轮重试。
-# 客户端从 UDP 数据报的源地址取得服务器 IP。
+# 服务器按 LanDiscovery 定义的格式和端口广播房间信息。
+# 每轮分别向 IPv4 受限广播地址和按 /24 推算的广播地址发送，单次失败后下轮照常广播。
 
 const PORT := LanDiscovery.PORT
 const INTERVAL := LanDiscovery.INTERVAL
