@@ -6,24 +6,24 @@
 
 [![Godot 4.7.1](https://img.shields.io/badge/Godot-4.7.1-478CBF?logo=godotengine&logoColor=white)](https://godotengine.org/)
 [![支持平台：Windows x64、macOS](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20macOS-0078D4)](RELEASE.md)
-[![构建与测试状态](https://github.com/aleksey-45/the-cyancular-ruins/actions/workflows/build.yml/badge.svg?branch=siri)](https://github.com/aleksey-45/the-cyancular-ruins/actions/workflows/build.yml?query=branch%3Asiri)
+[![构建与测试状态](https://github.com/aleksey-45/the-cyancular-ruins/actions/workflows/build.yml/badge.svg?branch=feat%2Fupstream-main-migration)](https://github.com/aleksey-45/the-cyancular-ruins/actions/workflows/build.yml?query=branch%3Afeat%2Fupstream-main-migration)
 [![MIT 许可证](https://img.shields.io/badge/license-MIT-green)](#许可证)
 
-像素风 2D 横版平台动作射击游戏，基于 Godot 引擎开发，内置 P2P 联机支持。
+基于 Godot 开发的像素风 2D 横版平台动作射击游戏，支持玩家建房联机和专用服务器。
 
 ## 项目结构
 
-客户端从主菜单进入单人关卡、联机大厅或地图编辑器。专用服务器在同一个进程中承载房间和对局。单人、服务器和联机客户端共用角色移动、碰撞与战斗模拟。[主菜单场景](scenes/main_menu.tscn) · [专用服务器场景](server/server_main.tscn)
+客户端从主菜单进入单人关卡、联机大厅或地图编辑器。联机建房时，客户端另起一个服务器进程管理房间与对局。单人关卡是一个本地席位的权威对局。它与服务器共用开局和模拟步进，联机客户端以同一世界逻辑执行预测。[主菜单场景](scenes/main_menu.tscn) · [专用服务器场景](server/server_main.tscn)
 
 | 目录 | 内容 |
 |---|---|
-| `core/sim/` | 地图读取、角色移动、碰撞查询、战斗、装备、地形破坏与时间回溯 |
+| `core/sim/` | 地图读取、角色移动、碰撞查询、战斗、装备、地形破坏、回合规则与时间技能 |
 | `core/net/` | 消息编解码、输入缓冲、状态快照、客户端预测与回滚、联机会话 |
 | `core/config/` | 玩法参数、房间选项、显示与输入设置、性能统计 |
 | `core/present/` | 对局画面与 HUD、地形图集、着色器、字体与音效 |
 | `scenes/` 与 `ui/` | 场景控制器、角色和敌人、菜单与 HUD |
-| `server/` | 房间会话、服务器模拟、回合规则与 Beta 时间技能 |
-| `data/` 与 `maps/` | 地形和敌人的数据配置、内置地图 |
+| `server/` | 专用服务器入口、房间管理与对局同步 |
+| `data/` 与 `maps/` | 地形材质、武器资源、EasyTier 组件清单和内置地图 |
 | `native/` | UDP 消息传输与子进程管理的 GDExtension |
 | `ui/map_editor/` | 主菜单内的 CYRM 地图编辑器与关卡试玩 |
 | `tools/` 与 `tests/` | 构建、打包和测试入口 |
