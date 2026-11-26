@@ -66,7 +66,7 @@ static func _finish(round: PvpHud.Round, data: Dictionary, names: Dictionary, te
 		subtitle = "杀敌数不相上下" if winner == 0 else ("你是大乱斗之王" if won else "%s 赢得了大乱斗" % names[winner])
 		round.banner.assign(["胜利！" if won and winner != 0 else title, subtitle])
 		round.title = "游戏结束"
-		round.sections.append(_section("击杀排行榜", UiFactory.C_TEXT, mode, stats.keys(), stats, names, 0))
+		round.sections.append(_section("击杀排行榜", UiDesign.C_TEXT, mode, stats.keys(), stats, names, 0))
 		return
 	if won:
 		subtitle = "你们赢下了整场对战" if mode == Mode.TEAM else "你赢得了整场对战"
@@ -81,9 +81,9 @@ static func _finish(round: PvpHud.Round, data: Dictionary, names: Dictionary, te
 		for team in [1, 2]:
 			var roles := stats.keys().filter(func(role: int) -> bool: return teams.get(role, 0) == team)
 			round.sections.append(_section("A 队" if team == 1 else "B 队",
-					UiFactory.C_TEAM_A if team == 1 else UiFactory.C_TEAM_B, mode, roles, stats, names, mvp))
+					UiDesign.C_TEAM_A if team == 1 else UiDesign.C_TEAM_B, mode, roles, stats, names, mvp))
 	else:
-		round.sections.append(_section("对局", UiFactory.C_TEXT, mode, [1, 2], stats, names, mvp))
+		round.sections.append(_section("对局", UiDesign.C_TEXT, mode, [1, 2], stats, names, mvp))
 
 static func _section(title: String, color: Color, mode: MatchFrame.Mode, roles: Array, stats: Dictionary,
 		names: Dictionary, mvp: int) -> PvpHud.Section:
@@ -107,7 +107,7 @@ static func _section(title: String, color: Color, mode: MatchFrame.Mode, roles: 
 	for i in roles.size():
 		var role: int = roles[i]
 		var values: Dictionary = stats.get(role, {})
-		var row := [("★ %d" if role == mvp else "%d") % (i + 1), UiFactory.fit_name(player_name.call(role), 12)]
+		var row := [("★ %d" if role == mvp else "%d") % (i + 1), UiDesign.fit_name(player_name.call(role), 12)]
 		for field in columns:
 			row.append(int(values.get(field, 0)))
 		section.rows.append([role == mvp, row])
@@ -125,18 +125,18 @@ static func _board(data: Dictionary, names: Dictionary, own: int, playing: bool)
 		var role: int = roles[i]
 		var mine := role == own
 		var tag := "存活"
-		var color := UiFactory.C_ACCENT if mine else UiFactory.C_TEXT
+		var color := UiDesign.C_ACCENT if mine else UiDesign.C_TEXT
 		if data["left"].has(role):
 			tag = "离开"
-			color = UiFactory.C_DANGER
+			color = UiDesign.C_DANGER
 		elif data["grace"].has(role):
 			tag = "掉线 %ds" % ceili(data["grace"][role])
-			color = UiFactory.C_GRACE
+			color = UiDesign.C_GRACE
 		elif playing and not data["alive"][role]:
 			tag = "复活中"
-			color = UiFactory.C_ACCENT if mine else UiFactory.C_TEXT_DIM
+			color = UiDesign.C_ACCENT if mine else UiDesign.C_TEXT_DIM
 		rows.append(["%d. %s  击杀 %d  阵亡 %d  %s" % [
-				i + 1, UiFactory.fit_name(names[role], 14), scores.get(role, 0), data["stats"][role]["deaths"], tag], color])
+				i + 1, UiDesign.fit_name(names[role], 14), scores.get(role, 0), data["stats"][role]["deaths"], tag], color])
 	return rows
 
 static func round_view(config: WorldSpec, state: Dictionary) -> Dictionary:

@@ -1,29 +1,6 @@
 extends Control
 
-# 设置页(UI 设计系统 v2 迁移):整页**容器化**,零绝对坐标。
-#
-# ── 结构(全部在 _build_page() 里用 UiKit / UiDesign 搭,场景文件只剩根 Control + Theme)─────
-#   UiKit.page(self) = MarginContainer(SP_6) → VBox(SP_5)
-#     ├─ Header    UiDesign.header_strip(页首标题, T_H1, 居中)
-#     ├─ Scroll    ScrollContainer(只纵滚;VScrollBar 用 Kit 皮肤) → HBox(SP_5) → 左/右两列 VBox
-#     │     ├─ 左列:UiKit.card ×4(音量 / 显示 / 通用 / 战斗显示)
-#     │     │        每行 = _form_row():HBox(定宽标签列 FORM_LABEL_W + 控件;非拉伸控件后接弹簧)
-#     │     └─ 右列:UiKit.card(按键映射)→ BindGrid(VBox) 10 行
-#     └─ Footer    HBox(恢复默认键位 [Quiet] …弹簧… 返回 [Primary])
-#   开关统一 UiDesign.ui_check()(Theme Kit);行高/间距全由容器 + token 决定。
-#
-# ── 与 main 参考版的差异(只改数据适配,不改版式)────────────────────────────────
-#   main 用 Settings 的属性 + display_res_index;本仓 Settings 是 get()/store(key) 泛型 API、
-#   分辨率用 display_resolution + DISPLAY_RESOLUTIONS,故接线按本仓 API 原样保留,
-#   设置项与读写语义与迁移前逐项等价(见 _wire_settings)。
-#
-# ── 行为零变化(迁移只改版式/结构)──────────────────────────────────────────────
-#   · Settings 的键名与读写/save/apply_display 调用、Sfx 音效、所有 toggled/value_changed 接线原样;
-#   · 键位捕获(点击→按新键 / Esc 取消)、Esc 返回、返回路径 main_menu.tscn 原样;
-#   · ACTION_NAMES / BATTLE_DISPLAY 内容与旧版一致。
-#
-# ★ 不新增颜色字面量:页面背景取 UiDesign.C_BG;字号/间距只用 T_* / SP_* token。
-# ★ 本文件零处 StyleBox / position= / size= / 手写 Color(...)。
+# 设置页的两栏布局由容器管理。表单和键位列表在运行时创建，并与 Settings 同步。
 
 const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
@@ -37,10 +14,9 @@ const BATTLE_DISPLAY := [
 	[&"pvp_minimap_show_enemy", "小地图显示其他玩家"],
 ]
 
-# 表单布局(全部 token 组合,不写魔法数;规则见 docs/ui.md)
-const FORM_LABEL_W := UiDesign.T_H2 * 12   # 384:定宽标签列,容纳 12 个 32px 汉字
-const BIND_NAME_W := UiDesign.T_H2 * 6     # 192:键位表标签列(6 个 32px 汉字)
-const ROW_MIN_H := UiDesign.SP_8           # 48:表单行最小高,让滑块/开关/下拉纵向对齐
+const FORM_LABEL_W := UiDesign.T_H2 * 12   # 表单标签列为 12 个全角字预留宽度。
+const BIND_NAME_W := UiDesign.T_H2 * 6     # 键位名称列为 6 个全角字预留宽度。
+const ROW_MIN_H := UiDesign.SP_8
 
 const BACK_SCENE := "res://scenes/main_menu.tscn"
 
@@ -66,9 +42,7 @@ func _ready() -> void:
 	_wire_settings()
 
 
-# ── 页面骨架(容器优先:谁负责排布就是容器,页面里没有任何绝对坐标)────────────────
 func _build_page() -> void:
-	# 背景:页面底色唯一来源 = 调色板 token(不写 Color 字面量)。
 	var bg := ColorRect.new()
 	bg.name = "Backdrop"
 	bg.color = UiDesign.C_BG
@@ -83,7 +57,7 @@ func _build_page() -> void:
 	header.name = "Header"
 	page.add_child(header)
 
-	# 内容区只纵滚:1280×960 这类窗口下两列卡片放不下时靠滚动,横向永不滚。
+	# 内容区高度不足时允许纵向滚动。
 	var scroll := ScrollContainer.new()
 	scroll.name = "Scroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -110,8 +84,6 @@ func _build_page() -> void:
 	right.add_theme_constant_override("separation", UiDesign.SP_5)
 	cols.add_child(right)
 
-	# 左右分栏:左 = 音量 / 显示 / 通用 / 战斗显示;右 = 按键映射(10 行,占满一列。
-	# 两列内容高度接近,1600×1200 的评审窗口下也不至于一侧长一侧空。
 	_build_audio_card(left)
 	_build_display_card(left)
 	_build_general_card(left)
@@ -121,24 +93,24 @@ func _build_page() -> void:
 
 
 func _build_audio_card(col: Control) -> void:
-	var body := UiKit.card(col, "音量")
+	var body := UiKit.card(col, "音量").body
 	_master = _slider_row(body, "主音量", "MasterSlider")
 	_sfx = _slider_row(body, "音效", "SfxSlider")
 
 
 func _build_display_card(col: Control) -> void:
-	var body := UiKit.card(col, "显示")
+	var body := UiKit.card(col, "显示").body
 	_resolution = _option_row(body, "窗口分辨率", "ResOption")
 	_fullscreen = _switch_row(body, "全屏", "FullscreenCheck")
 
 
 func _build_general_card(col: Control) -> void:
-	var body := UiKit.card(col, "通用")
+	var body := UiKit.card(col, "通用").body
 	_wheel = _switch_row(body, "鼠标滚轮切枪", "WheelCheck")
 
 
 func _build_battle_card(col: Control) -> void:
-	var body := UiKit.card(col, "战斗显示")
+	var body := UiKit.card(col, "战斗显示").body
 	_traj = _switch_row(body, BATTLE_DISPLAY[0][1], "TrajCheck")
 	_enemy_hp = _switch_row(body, BATTLE_DISPLAY[1][1], "EnemyHpCheck")
 	_minimap = _switch_row(body, BATTLE_DISPLAY[2][1], "MinimapCheck")
@@ -146,7 +118,7 @@ func _build_battle_card(col: Control) -> void:
 
 
 func _build_binding_card(col: Control) -> void:
-	var body := UiKit.card(col, "按键映射(点击后按新键;Esc 取消)")
+	var body := UiKit.card(col, "按键映射(点击后按新键;Esc 取消)").body
 	_bind_grid = VBoxContainer.new()
 	_bind_grid.name = "BindGrid"
 	_bind_grid.add_theme_constant_override("separation", UiDesign.SP_1)
@@ -174,9 +146,7 @@ func _build_footer(page: Control) -> void:
 	footer.add_child(_back_btn)
 
 
-# ── 表单行(工具)──────────────────────────────────────────────────────────────
-# 一行 = HBox(定宽标签列 + 控件)。expand=true:控件吃掉剩余宽度(滑块);false:控件自然宽,
-# 后面接一根弹簧把它顶到标签列紧邻处(开关/下拉),避免裸 CheckButton 被宽容器拉成整行。
+# 滑块填充剩余宽度。开关和下拉框按最小尺寸显示，后方的占位控件填充余下空间。
 func _form_row(parent: Control, label_text: String, control: Control, expand: bool) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.custom_minimum_size = Vector2(0, ROW_MIN_H)
@@ -219,7 +189,6 @@ func _switch_row(parent: Control, label_text: String, node_name: String) -> Chec
 func _option_row(parent: Control, label_text: String, node_name: String) -> OptionButton:
 	var ob := OptionButton.new()
 	ob.name = node_name
-	# 下拉 = 按钮皮肤:用 Theme 2.0 的 Quiet variation(不再逐控件拼样式)。
 	ob.theme_type_variation = &"Quiet"
 	_form_row(parent, label_text, ob, false)
 	return ob
@@ -236,7 +205,7 @@ func _wire_settings() -> void:
 	_check(_minimap, Settings.get(BATTLE_DISPLAY[2][0]), Settings.store.bind(BATTLE_DISPLAY[2][0]))
 	_check(_minimap_enemy, Settings.get(BATTLE_DISPLAY[3][0]), Settings.store.bind(BATTLE_DISPLAY[3][0]))
 
-	# ★ 下拉选项由 Settings.DISPLAY_RESOLUTIONS 现场生成,不把尺寸表抄进场景 —— 那张表是单一来源。
+	# 选项索引与 Settings.DISPLAY_RESOLUTIONS 对应，选择后按同一索引读取尺寸。
 	_resolution.clear()
 	for resolution in Settings.DISPLAY_RESOLUTIONS:
 		_resolution.add_item("%d × %d" % [resolution.x, resolution.y])
@@ -274,7 +243,6 @@ func _check(cb: CheckButton, on: bool, on_toggle: Callable) -> void:
 		on_toggle.call(v))
 
 
-# ── 键位表(右栏):行数由 Settings.REMAPPABLE_ACTIONS 定,故留在代码里 ──
 func _fill_bind_grid() -> void:
 	for action in Settings.REMAPPABLE_ACTIONS:
 		var label := UiDesign.ui_label(ACTION_NAMES.get(action, action), "body")

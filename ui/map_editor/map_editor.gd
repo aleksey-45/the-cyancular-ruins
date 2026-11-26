@@ -47,7 +47,7 @@ func _ready() -> void:
 	_auto_quit = get_tree().auto_accept_quit
 	get_tree().auto_accept_quit = false
 	theme = preload("res://ui/map_editor/editor_theme.tres")
-	UiFactory.cover(self, UiFactory.shade(Color("#0e1519")))
+	UiDesign.cover(self, UiDesign.shade(Color("#0e1519")))
 	add_child(_workspace)
 	_workspace.add_theme_constant_override("separation", 10)
 	_workspace.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 10)
@@ -119,7 +119,7 @@ func _build_ui() -> void:
 	_toolbar.play_requested.connect(start_trial)
 	_toolbar.exit_requested.connect(_request_exit)
 
-	var body := UiFactory.box(_workspace, 8, false)
+	var body := UiDesign.box(_workspace, 8, false)
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var left := _sidebar(body, 292)
 	_palette = MapEditorToolPalette.new()
@@ -130,7 +130,7 @@ func _build_ui() -> void:
 	left.add_child(HSeparator.new())
 	_build_materials(left)
 
-	var center := UiFactory.box(body, 4, true)
+	var center := UiDesign.box(body, 4, true)
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var strip := PanelContainer.new()
 	center.add_child(strip)
@@ -357,10 +357,10 @@ func _say(text: String) -> void:
 	_status.tooltip_text = text
 
 static func _row(parent: Control) -> HBoxContainer:
-	return UiFactory.box(parent, 6, false) as HBoxContainer
+	return UiDesign.box(parent, 6, false) as HBoxContainer
 
 static func _label(parent: Control, text: String, font_size := 24, color := Color(0.812, 0.859, 0.843)) -> Label:
-	var label := UiFactory.label(text, font_size, color)
+	var label := UiDesign.label(text, font_size, color)
 	parent.add_child(label)
 	return label
 
@@ -384,6 +384,6 @@ static func _sidebar(parent: Control, width: float) -> VBoxContainer:
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	panel.add_child(scroll)
-	var column := UiFactory.box(scroll, 9, true) as VBoxContainer
+	var column := UiDesign.box(scroll, 9, true) as VBoxContainer
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return column

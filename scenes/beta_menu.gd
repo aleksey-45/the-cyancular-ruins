@@ -32,8 +32,8 @@ func _ready() -> void:
 
 
 func _make_card(c: Dictionary) -> Control:
-	var body := UiKit.card(_cards_row)
-	var card := body.get_parent().get_parent().get_parent() as PanelContainer
+	var card := UiKit.card(_cards_row)
+	var body := card.body
 	card.custom_minimum_size = Vector2(CARD_MIN_W, 0)
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.gui_input.connect(func(ev: InputEvent) -> void:

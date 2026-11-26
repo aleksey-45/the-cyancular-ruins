@@ -17,7 +17,7 @@ var _seg_index := 0
 
 func _ready() -> void:
 	_sky.show_behind_parent = true
-	UiFactory.cover(self, _sky)
+	UiDesign.cover(self, _sky)
 	if _map_material.shader == null:
 		_map_material.shader = preload("res://core/present/menu_fisheye.gdshader")
 		_set_map(CyrmMap.load_file(MAP))

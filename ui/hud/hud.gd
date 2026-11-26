@@ -147,7 +147,7 @@ func _build_kill_counter() -> void:
 	UiDesign.hud_plate(panel, UiDesign.SP_4, UiDesign.SP_2, false)
 	_kill_count = UiDesign.label("000", UiDesign.T_H1, UiDesign.C_ACCENT)
 	panel.add_child(_kill_count)
-	UiFactory.place(self, panel, Rect2(-UiDesign.SP_6, UiDesign.SP_4, 0, 0), Vector2.RIGHT)
+	UiDesign.place(self, panel, Rect2(-UiDesign.SP_6, UiDesign.SP_4, 0, 0), Vector2.RIGHT)
 
 
 class Vitals extends Control:

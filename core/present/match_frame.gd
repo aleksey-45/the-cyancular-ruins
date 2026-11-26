@@ -33,9 +33,9 @@ class Pose:
 
 	func name_color(mode: Mode) -> Color:
 		if mode == Mode.ROYALE:
-			var base := UiFactory.C_TEAM_A
+			var base := UiDesign.C_TEAM_A
 			return Color.from_hsv(fposmod(base.h + hue, 1.0), base.s, base.v)
-		return UiFactory.C_TEAM_A if team == 1 else UiFactory.C_TEAM_B
+		return UiDesign.C_TEAM_A if team == 1 else UiDesign.C_TEAM_B
 
 class Clock:
 	var balance: float

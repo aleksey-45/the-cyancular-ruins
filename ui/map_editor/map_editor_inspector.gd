@@ -40,7 +40,7 @@ func _build(clipboard: Array) -> void:
 	material.folded = true
 	add_child(material)
 	param_rows.material = material
-	var fields := UiFactory.box(material, 4, true)
+	var fields := UiDesign.box(material, 4, true)
 	for i in 4:
 		var spin := _spin(fields, ["色相", "亮度", "饱和度", "透明度"][i], 0, 7, brush.tint[i])
 		spin.value_changed.connect(func(value: float) -> void:

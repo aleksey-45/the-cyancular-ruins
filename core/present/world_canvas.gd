@@ -45,7 +45,7 @@ func _ready() -> void:
 	add_child(sky_layer)
 	# 镜头预留的上下边距延用天顶和地平线颜色。
 	_sky.overscan_y = maxf(1.0, get_viewport_rect().size.y / get_window().get_visible_rect().size.y)
-	UiFactory.cover(sky_layer, _sky)
+	UiDesign.cover(sky_layer, _sky)
 	add_child(_ambient)
 	_directional.height = 0.25
 	add_child(_directional)
@@ -236,8 +236,8 @@ func _draw_labels(target: CanvasItem, rows: Array) -> void:
 		var color: Color = row[2]
 		if row[3]:
 			target.draw_rect(Rect2(start - Vector2(6, FONT.get_ascent(size) + 2),
-					Vector2(width + 12, FONT.get_height(size) + 4)), UiFactory.C_PLATE)
+					Vector2(width + 12, FONT.get_height(size) + 4)), UiDesign.C_PLATE)
 		if row[4] > 0:
 			target.draw_string_outline(FONT, start, row[0], HORIZONTAL_ALIGNMENT_LEFT, -1, size,
-					row[4], Color(UiFactory.C_BG, color.a))
+					row[4], Color(UiDesign.C_BG, color.a))
 		target.draw_string(FONT, start, row[0], HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)

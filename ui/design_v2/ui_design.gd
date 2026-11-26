@@ -36,15 +36,7 @@ static func hud_plate(c: Control, pad_x: int, pad_y: int, draw_center := true,
 	c.add_theme_stylebox_override("panel", sb)
 
 
-static func menu_panel(padding: Vector2 = Vector2(64, 46)) -> PanelContainer:
-	var outer := PanelContainer.new()
-	skin_menu_panel(outer, padding)
-	return outer
-
-
-static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
-	if outer.get_node_or_null("Body") != null:
-		return
+static func skin_menu_panel(outer: PanelContainer, padding := Vector2(64, 46)) -> PanelContainer:
 	_apply_variation(outer, &"PanelCarved")
 	var body := PanelContainer.new()
 	body.name = "Body"
@@ -65,6 +57,7 @@ static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
 		outer.remove_child(c)
 		body.add_child(c)
 	outer.add_child(body)
+	return body
 
 
 # 将内边距映射到主题变体，定义对应 tools/gen_menu_theme_v2.gd 的 _panel_variants。
@@ -128,15 +121,69 @@ static func ui_check() -> CheckButton:
 	return cb
 
 
-static func header_strip(text: String, size: int = 32, centered := false) -> PanelContainer:
-	var p := PanelContainer.new()
+class Header extends PanelContainer:
+	var title: Label
+
+static func header_strip(text: String, size := 32, centered := false, color := C_GOLD) -> Header:
+	var p := Header.new()
 	_apply_variation(p, &"HeaderStrip")
-	var l := label(text, size, C_GOLD)
-	if centered:
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	p.add_child(l)
+	p.title = label(text, size, color)
+	if centered: p.title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	p.add_child(p.title)
 	return p
 
 
 static func style_row_button(b: Button) -> void:
 	_apply_variation(b, &"RowButton")
+
+static func cover(parent: Node, control: Control) -> void:
+	parent.add_child(control)
+	control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+static func place(parent: Node, control: Control, box: Rect2, anchor := Vector2.ZERO) -> void:
+	parent.add_child(control)
+	control.anchor_left = anchor.x
+	control.anchor_right = anchor.x
+	control.anchor_top = anchor.y
+	control.anchor_bottom = anchor.y
+	control.offset_left = box.position.x
+	control.offset_top = box.position.y
+	control.offset_right = box.end.x
+	control.offset_bottom = box.end.y
+
+static func shade(color: Color, pick_mouse := false) -> ColorRect:
+	var rect := ColorRect.new()
+	rect.color = color
+	rect.mouse_filter = Control.MOUSE_FILTER_STOP if pick_mouse else Control.MOUSE_FILTER_IGNORE
+	return rect
+
+static func box(parent: Node, spacing: int, vertical: bool) -> BoxContainer:
+	var result: BoxContainer = VBoxContainer.new() if vertical else HBoxContainer.new()
+	result.add_theme_constant_override("separation", spacing)
+	parent.add_child(result)
+	return result
+
+static func fit_name(s: String, max_units: int) -> String:
+	var units := 0
+	var out := ""
+	for i in s.length():
+		var w := 2 if s.unicode_at(i) > 0x2E80 else 1
+		if units + w > max_units:
+			out += "…"
+			units += 1
+			break
+		units += w
+		out += s[i]
+	while units < max_units:
+		out += " "
+		units += 1
+	return out
+
+static func ping_color(ms: int) -> Color:
+	if ms < 60:
+		return Color(0.45, 0.9, 0.45)
+	if ms < 100:
+		return Color(1.0, 0.85, 0.25)
+	if ms < 150:
+		return Color(1.0, 0.6, 0.15)
+	return Color(1.0, 0.3, 0.3)

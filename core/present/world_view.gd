@@ -210,7 +210,7 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 			elif pose.haste and pose.anchor.distance_squared_to(frame.focus) < 1500.0 * 1500.0:
 				glow = ENEMY_GLOW
 	else:
-		var skin_tint := Color.WHITE if frame.mode == MatchFrame.Mode.SOLO else pose.name_color(frame.mode) / UiFactory.C_TEAM_A
+		var skin_tint := Color.WHITE if frame.mode == MatchFrame.Mode.SOLO else pose.name_color(frame.mode) / UiDesign.C_TEAM_A
 		if frame.mode == MatchFrame.Mode.DUEL or frame.mode == MatchFrame.Mode.TEAM:
 			tint = skin_tint
 		var hit_left := pose.hit_left
@@ -307,14 +307,14 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 		if alternate:
 			interval = HASTE_GHOST_INTERVAL
 		elif pose.haste:
-			color = UiFactory.C_TEAM_B
+			color = UiDesign.C_TEAM_B
 			interval = HASTE_GHOST_INTERVAL
 		elif foreground:
-			color = UiFactory.C_TEXT_DIM
+			color = UiDesign.C_TEXT_DIM
 			pass_kind = WorldCanvas.Pass.FOREGROUND
 			interval = REWIND_GHOST_INTERVAL
 		elif pose.state == Player.DASH:
-			color = UiFactory.C_TEAM_A * tint
+			color = UiDesign.C_TEAM_A * tint
 			interval = DASH_GHOST_INTERVAL
 			life = DASH_GHOST_LIFE
 		else:
@@ -400,7 +400,7 @@ func _draw_effects(frame: MatchFrame, grain_target: Vector2) -> void:
 						rows.remove_at(i)
 						continue
 					at.y += WorldCanvas.FONT.get_ascent(32) - 90.0 - 56.0 * (1.0 - (1.0 - p) ** 2)
-					var color := UiFactory.C_DANGER if row[3] else UiFactory.C_WARN
+					var color := UiDesign.C_DANGER if row[3] else UiDesign.C_WARN
 					_canvas.text_at(str(row[2]), at, Color(color, minf(1.0, 2.0 * (1.0 - p))), false, 6)
 				Effect.GRAIN:
 					var flight: float = row[2]

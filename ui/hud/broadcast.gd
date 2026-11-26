@@ -44,7 +44,7 @@ func _ready() -> void:
 	_center.visible = false
 	add_child(_center)
 
-	_panel = UiDesign.menu_panel(Vector2(72, 44))
+	_panel = PanelContainer.new()
 	_panel.name = "Panel"
 	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_center.add_child(_panel)
@@ -54,12 +54,11 @@ func _ready() -> void:
 	body.alignment = BoxContainer.ALIGNMENT_CENTER
 	body.add_theme_constant_override("separation", UiDesign.SP_5)
 	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	(_panel.get_node("Body") as Container).add_child(body)
+	UiDesign.skin_menu_panel(_panel, Vector2(72, 44)).add_child(body)
 
 	var strip := UiDesign.header_strip("", BIG_SIZE, true)
 	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	big = strip.get_child(0) as Label
-	big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	big = strip.title
 	big.custom_minimum_size.x = STRIP_MIN_W
 	body.add_child(strip)
 
@@ -81,12 +80,11 @@ func set_broadcast(visible_on: bool, title: String, subtitle: String) -> void:
 
 
 func start_countdown(seconds: float, subtitle: String) -> void:
-	_clock.start(seconds)
 	show()
 	mask.visible = true
 	_center.visible = true
 	sub.text = subtitle
-	_count(int(_clock.text()))
+	_count(_clock.start(seconds))
 
 
 func _process(delta: float) -> void:
@@ -94,8 +92,9 @@ func _process(delta: float) -> void:
 		_punch = maxf(0.0, _punch - delta * PUNCH_DECAY)
 		_apply_punch()
 	# 倒计时停止后保留最后显示的数字。
-	if _clock.tick(delta) == CountdownClock.TICK_RUNNING:
-		_count(int(_clock.text()))
+	var number := _clock.tick(delta)
+	if number > 0:
+		_count(number)
 
 
 func _count(number: int) -> void:

@@ -12,7 +12,7 @@ var _discovery := LanDiscovery.new()
 var _view := LobbyView.new()
 
 func _ready() -> void:
-	UiFactory.cover(self, _view)
+	UiDesign.cover(self, _view)
 	_view.mount(PvpSession.player_name, _form_values())
 	_view.nickname_changed.connect(_name_changed)
 	_view.filter_changed.connect(_set_filter)

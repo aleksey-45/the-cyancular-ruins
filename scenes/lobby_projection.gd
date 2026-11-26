@@ -4,16 +4,16 @@ extends RefCounted
 static func card(room: Dictionary, can_open: bool) -> Dictionary:
 	var mode: String = room["mode"]
 	var rules: String
-	var color := UiFactory.C_ACCENT
+	var color := UiDesign.C_ACCENT
 	match mode:
 		PvpSession.MODE_ROYALE:
 			var minutes := int(room["match_time"]) / 60
 			rules = "限时 %d 分" % minutes if minutes > 0 else "不限时"
-			color = UiFactory.C_MODE_ROYALE
+			color = UiDesign.C_MODE_ROYALE
 		PvpSession.MODE_TEAM:
 			var counts: Dictionary = room["team_counts"]
 			rules = "A%d / B%d / 未选%d" % [counts[1], counts[2], counts[0]]
-			color = UiFactory.C_MODE_TEAM
+			color = UiDesign.C_MODE_TEAM
 		_:
 			rules = "三局两胜"
 	if room["player_collision"]:
@@ -22,7 +22,7 @@ static func card(room: Dictionary, can_open: bool) -> Dictionary:
 	var names := PackedStringArray()
 	for i in mini(players.size(), 3):
 		var entry: Dictionary = players[i]
-		names.append("· %s%s" % [UiFactory.fit_name(entry["name"], 14),
+		names.append("· %s%s" % [UiDesign.fit_name(entry["name"], 14),
 				"(房主)" if entry["role"] == room["host_role"] else ""])
 	if players.size() > 3:
 		names.append("…等 %d 人" % players.size())
@@ -48,7 +48,7 @@ static func waiting(room: Dictionary) -> Dictionary:
 		var members := players.filter(func(entry: Dictionary) -> bool: return entry["team"] == side) if is_team else players
 		if is_team:
 			roster.append(["—— %s 队(%d/%d) ——" % ["A" if side == 1 else "B", members.size(), TeamRules.MAX_TEAM],
-					UiFactory.C_ACCENT])
+					UiDesign.C_ACCENT])
 		for member: Dictionary in members:
 			var role: int = member["role"]
 			var mine := role == own
@@ -56,7 +56,7 @@ static func waiting(room: Dictionary) -> Dictionary:
 				my_team = side
 			rank += 1
 			roster.append(["%d. %s%s%s" % [rank, member["name"], "(我)" if mine else "", "(房主)" if role == host else ""],
-					UiFactory.C_ACCENT if mine else UiFactory.C_TEXT])
+					UiDesign.C_ACCENT if mine else UiDesign.C_TEXT])
 	var count: String
 	match mode:
 		PvpSession.MODE_TEAM:

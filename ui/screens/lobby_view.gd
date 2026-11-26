@@ -204,8 +204,8 @@ func _build_filters(page: VBoxContainer) -> void:
 
 
 func _build_browser(page: VBoxContainer) -> void:
-	var body := UiKit.card(page)
-	var panel := body.get_parent().get_parent().get_parent() as PanelContainer
+	var panel := UiKit.card(page)
+	var body := panel.body
 	panel.name = "Browser"
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL

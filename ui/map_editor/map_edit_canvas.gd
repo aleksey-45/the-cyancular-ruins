@@ -34,11 +34,11 @@ var _on_release: Callable
 var _points: Array[Vector2i] = []
 var _tip: Vector2i:
 	get: return mouse_cell.clamp(Vector2i.ZERO, session.map.size - Vector2i.ONE)
-var terrain := UiFactory.shade(Color("#26363b"))
+var terrain := UiDesign.shade(Color("#26363b"))
 var _sky := Daylight.new()
 var _map_layers := Node2D.new()
-var _major_grid := UiFactory.shade(Color(0.75, 0.88, 0.85))
-var _minor_grid := UiFactory.shade(Color(1, 1, 1, 0.12))
+var _major_grid := UiDesign.shade(Color(0.75, 0.88, 0.85))
+var _minor_grid := UiDesign.shade(Color(1, 1, 1, 0.12))
 var preview_minute := -1.0:
 	set(value):
 		preview_minute = value
@@ -69,7 +69,7 @@ func _ready() -> void:
 	terrain.clip_contents = true
 	add_child(terrain)
 	_sky.visible = preview_minute >= 0.0
-	UiFactory.cover(terrain, _sky)
+	UiDesign.cover(terrain, _sky)
 	terrain.add_child(_map_layers)
 	for tiles in _tiles:
 		tiles.collision_enabled = false
@@ -86,7 +86,7 @@ func _ready() -> void:
 	grid_material.shader = preload("res://ui/map_editor/grid.gdshader")
 	for overlay in [_minor_grid, _major_grid]:
 		overlay.material = grid_material
-		UiFactory.cover(terrain, overlay)
+		UiDesign.cover(terrain, overlay)
 	add_child(markings)
 	markings.draw.connect(_draw_markings)
 	add_child(preview)

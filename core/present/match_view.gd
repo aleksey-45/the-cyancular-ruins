@@ -41,10 +41,10 @@ func mount(world: WorldView, map: Dictionary,
 	_world.bind(_canvas, Vector2(map.size * CyrmMap.CELL_SIZE))
 	pause.mount(mode != MatchFrame.Mode.SOLO)
 	if mode == MatchFrame.Mode.SOLO:
-		_time_of_day = UiFactory.label("", 40)
+		_time_of_day = UiDesign.label("", 40)
 		_time_of_day.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_time_of_day.add_theme_constant_override("outline_size", 6)
-		UiFactory.place(_hud, _time_of_day, Rect2(-88, 16, 176, 54), Vector2(0.5, 0))
+		UiDesign.place(_hud, _time_of_day, Rect2(-88, 16, 176, 54), Vector2(0.5, 0))
 	else:
 		pvp_hud = PvpHud.new()
 		pvp_hud.mode = mode
@@ -70,10 +70,10 @@ func mount_intro(intro: RunIntro) -> void:
 	pause.set_process_unhandled_input(false)
 	_screen.set_process(false)
 	_screen.set_process_unhandled_input(false)
-	var hint := UiFactory.label("Esc / 空格 跳过", 28)
+	var hint := UiDesign.label("Esc / 空格 跳过", 28)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	hint.add_theme_constant_override("outline_size", 6)
-	UiFactory.place(_screen, hint, Rect2(-252, -70, 224, 44), Vector2.ONE)
+	UiDesign.place(_screen, hint, Rect2(-252, -70, 224, 44), Vector2.ONE)
 
 func show_intro_frame(frame: Array, textures: Array[Texture2D]) -> void:
 	var walls: PackedByteArray = frame[RunIntro.Frame.WALLS]

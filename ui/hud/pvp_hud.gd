@@ -201,13 +201,13 @@ func _build_result() -> void:
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_result.add_child(center)
 
-	_result_panel = UiDesign.menu_panel()
+	_result_panel = PanelContainer.new()
 	_result_panel.name = "Panel"
 	center.add_child(_result_panel)
 	var body := VBoxContainer.new()
 	body.name = "Body"
 	body.add_theme_constant_override("separation", UiDesign.SP_5)
-	(_result_panel.get_node("Body") as Container).add_child(body)
+	UiDesign.skin_menu_panel(_result_panel).add_child(body)
 
 	_result_title = UiDesign.ui_label("", "h1")
 	_result_title.name = "Title"
@@ -243,7 +243,7 @@ func set_status(message: String) -> void:
 
 func set_ping(ms: int) -> void:
 	_ping.text = "%dms" % ms
-	_ping.add_theme_color_override("font_color", UiFactory.ping_color(ms))
+	_ping.add_theme_color_override("font_color", UiDesign.ping_color(ms))
 
 
 func _update_grace(seconds: float) -> void:

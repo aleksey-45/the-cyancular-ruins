@@ -21,43 +21,34 @@ static func page(parent: Control, margin: int = UiDesign.SP_6, gap: int = UiDesi
 	return vb
 
 
-## 添加顶部工具栏，返回用于放置按钮的水平容器。
 static func toolbar(parent: Control) -> HBoxContainer:
-	var barrier := MarginContainer.new()
-	barrier.add_theme_constant_override("margin_left", UiDesign.SP_4)
-	barrier.add_theme_constant_override("margin_right", UiDesign.SP_4)
-	barrier.add_theme_constant_override("margin_top", UiDesign.SP_2)
-	barrier.add_theme_constant_override("margin_bottom", UiDesign.SP_2)
-	var row := HBoxContainer.new()
-	row.name = "Toolbar"
-	row.add_theme_constant_override("separation", UiDesign.SP_3)
-	barrier.add_child(row)
-	var panel := UiDesign.ui_panel("bar")
-	panel.add_child(barrier)
-	parent.add_child(panel)
-	return row
+	return _bar(parent, "Toolbar", UiDesign.SP_2)
 
-
-## 添加底部状态栏，返回用于放置状态文字等控件的水平容器。
 static func status_bar(parent: Control) -> HBoxContainer:
+	return _bar(parent, "StatusBar", UiDesign.SP_1)
+
+static func _bar(parent: Control, title: String, vertical_pad: int) -> HBoxContainer:
 	var row := HBoxContainer.new()
-	row.name = "StatusBar"
+	row.name = title
 	row.add_theme_constant_override("separation", UiDesign.SP_3)
 	var barrier := MarginContainer.new()
-	barrier.add_theme_constant_override("margin_left", UiDesign.SP_4)
-	barrier.add_theme_constant_override("margin_right", UiDesign.SP_4)
-	barrier.add_theme_constant_override("margin_top", UiDesign.SP_1)
-	barrier.add_theme_constant_override("margin_bottom", UiDesign.SP_1)
+	for side in ["left", "right"]:
+		barrier.add_theme_constant_override("margin_" + side, UiDesign.SP_4)
+	for side in ["top", "bottom"]:
+		barrier.add_theme_constant_override("margin_" + side, vertical_pad)
 	barrier.add_child(row)
 	var panel := UiDesign.ui_panel("bar")
 	panel.add_child(barrier)
 	parent.add_child(panel)
 	return row
 
+class Card extends PanelContainer:
+	var body := VBoxContainer.new()
 
-## 添加带可选标题的卡片，返回其中的内容容器 Body。外层面板是 Body 的三级父节点。
-static func card(parent: Control, title: String = "") -> VBoxContainer:
-	var panel := UiDesign.ui_panel("card")
+static func card(parent: Control, title := "") -> Card:
+	var panel := Card.new()
+	panel.theme = UiDesign.MENU_THEME
+	panel.theme_type_variation = &"Card"
 	parent.add_child(panel)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", UiDesign.SP_3)
@@ -68,8 +59,23 @@ static func card(parent: Control, title: String = "") -> VBoxContainer:
 	panel.add_child(barrier)
 	if title != "":
 		vb.add_child(UiDesign.ui_label(title, "h2"))
-	var body := VBoxContainer.new()
+	var body := panel.body
 	body.name = "Body"
 	body.add_theme_constant_override("separation", UiDesign.SP_2)
 	vb.add_child(body)
-	return body
+	return panel
+
+static func spin_row(parent: Control, text: String, minimum: int, maximum: int, value: int, font_size := 0) -> SpinBox:
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+	var label := Label.new()
+	label.text = text
+	if font_size > 0: label.add_theme_font_size_override("font_size", font_size)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(label)
+	var spin := SpinBox.new()
+	spin.min_value = minimum
+	spin.max_value = maximum
+	spin.value = value
+	row.add_child(spin)
+	return spin

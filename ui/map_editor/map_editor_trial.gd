@@ -33,7 +33,7 @@ func start(cell: Vector2i = session.selected_point().get("cell", SpawnPicker.NO_
 	var hint := CanvasLayer.new()
 	hint.layer = 160
 	trial.add_child(hint)
-	var text := UiFactory.label("试玩    Esc 返回地图编辑器", 28)
+	var text := UiDesign.label("试玩    Esc 返回地图编辑器", 28)
 	text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	text.add_theme_constant_override("outline_size", 5)
 	hint.add_child(text)
