@@ -12,19 +12,19 @@ var tints: Array[SpinBox] = []
 var ink := ColorPickerButton.new()
 var points: MapEditorPoints
 
-var _selection_info := Label.new()
+var _selection_info: Label
 
 func setup(p_session: MapEditSession, p_brush: MapBrush, p_canvas: MapEditCanvas,
 		clipboard: Array, on_changed: Callable) -> void:
 	session = p_session
 	brush = p_brush
 	canvas = p_canvas
-	add_theme_constant_override("separation", 6)
+	add_theme_constant_override("separation", UiDesign.SP_2)
 	_build(clipboard)
 	changed.connect(on_changed)
 
 func _build(clipboard: Array) -> void:
-	var width := UiKit.spin_row(self, "笔宽（子格）", 1, 60, brush.width, 20)
+	var width := UiKit.spin_row(self, "笔宽（子格）", 1, 60, brush.width)
 	param_rows.width = width.get_parent()
 	width.value_changed.connect(func(value: float) -> void:
 		brush.width = int(value)
@@ -40,9 +40,9 @@ func _build(clipboard: Array) -> void:
 	material.folded = true
 	add_child(material)
 	param_rows.material = material
-	var fields := UiDesign.box(material, 4, true)
+	var fields := UiDesign.box(material, UiDesign.SP_1, true)
 	for i in 4:
-		var spin := UiKit.spin_row(fields, ["色相", "亮度", "饱和度", "透明度"][i], 0, 7, brush.tint[i], 20)
+		var spin := UiKit.spin_row(fields, ["色相", "亮度", "饱和度", "透明度"][i], 0, 7, brush.tint[i])
 		spin.value_changed.connect(func(value: float) -> void:
 			brush.tint[i] = int(value)
 			changed.emit())
@@ -57,11 +57,7 @@ func _build(clipboard: Array) -> void:
 		var row := HBoxContainer.new()
 		param_rows.color.add_child(row)
 		var start := property == "color"
-		var label := Label.new()
-		label.text = "颜色" if start else "终点色"
-		label.add_theme_font_size_override("font_size", 20)
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(label)
+		UiKit.label(row, "颜色" if start else "终点色").size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var picker := ink if start else ColorPickerButton.new()
 		row.add_child(picker)
 		picker.custom_minimum_size = Vector2(85, 34)
@@ -73,25 +69,13 @@ func _build(clipboard: Array) -> void:
 
 	param_rows.selection = VBoxContainer.new()
 	add_child(param_rows.selection)
-	param_rows.selection.add_child(_selection_info)
+	_selection_info = UiKit.label(param_rows.selection, "")
 	var actions := GridContainer.new()
 	actions.columns = 2
 	param_rows.selection.add_child(actions)
-	for item in clipboard:
-		var button := Button.new()
-		button.text = item[0]
-		button.add_theme_color_override("font_color", Color("#d9e3df"))
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.pressed.connect(item[1])
-		actions.add_child(button)
-	for item in [["清除选区内容", session.clear_selection, KEY_NONE], ["水平镜像", session.mirror.bind(true), KEY_H],
-			["垂直镜像", session.mirror.bind(false), KEY_V]]:
-		var button := Button.new()
-		button.text = item[0]
-		button.add_theme_color_override("font_color", Color("#d9e3df"))
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.pressed.connect(item[1])
-		actions.add_child(button)
+	for item in clipboard + [["清除选区内容", session.clear_selection], ["水平镜像", session.mirror.bind(true)],
+			["垂直镜像", session.mirror.bind(false)]]:
+		UiKit.button(actions, item[0], item[1]).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	points = MapEditorPoints.new()
 	add_child(points)

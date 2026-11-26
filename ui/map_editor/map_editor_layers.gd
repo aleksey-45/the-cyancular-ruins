@@ -16,25 +16,20 @@ func setup(p_session: MapEditSession, p_canvas: MapEditCanvas) -> void:
 	_build()
 
 func _build() -> void:
-	add_theme_constant_override("separation", 6)
+	add_theme_constant_override("separation", UiDesign.SP_2)
 	var grid := GridContainer.new()
 	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", UiDesign.SP_3)
 	add_child(grid)
-	_label(grid, "图层")
-	_label(grid, "可见").horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_label(grid, "锁定").horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	for heading in ["图层", "可见", "锁定"]:
+		UiKit.label(grid, heading, UiDesign.C_ACCENT).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var group := ButtonGroup.new()
 	for i in LAYERS.size():
-		var name_button := Button.new()
-		name_button.text = LAYERS[i]
+		var name_button := UiKit.button(grid, LAYERS[i], layer_selected.emit.bind(i))
 		name_button.toggle_mode = true
 		name_button.button_group = group
 		name_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		name_button.button_pressed = i == session.layer
-		name_button.add_theme_color_override("font_color", Color("#d9e3df"))
-		name_button.add_theme_color_override("font_pressed_color", Color("#d0ffe9"))
-		name_button.pressed.connect(func() -> void: layer_selected.emit(i))
-		grid.add_child(name_button)
 		_buttons.append(name_button)
 		for property in ["visible", "locked"]:
 			var check := CheckBox.new()
@@ -47,8 +42,7 @@ func _build() -> void:
 			grid.add_child(check)
 
 func select_layer(index: int) -> void:
-	if index >= 0 and index < _buttons.size():
-		_buttons[index].button_pressed = true
+	_buttons[index].button_pressed = true
 
 func buttons() -> Array[Button]:
 	return _buttons
@@ -59,11 +53,3 @@ func set_flag(value: bool, index: int, property: String) -> void:
 	else:
 		session.locked[index] = value
 		canvas.cancel()
-
-func _label(parent: Control, text: String) -> Label:
-	var label := Label.new()
-	label.text = text
-	label.add_theme_font_size_override("font_size", 20)
-	label.add_theme_color_override("font_color", Color("#a9dcca"))
-	parent.add_child(label)
-	return label

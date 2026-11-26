@@ -74,6 +74,8 @@ func confirm_discard(proceed: Callable) -> void:
 
 func show_dialog(dialog: ConfirmationDialog, size_hint := Vector2i.ZERO) -> void:
 	dialog.cancel_button_text = "取消"
+	for button in [dialog.get_ok_button(), dialog.get_cancel_button()]:
+		button.theme_type_variation = &"ToolButton"
 	get_parent().add_child(dialog)
 	dialog.visibility_changed.connect(func() -> void:
 		if not dialog.visible: dialog.queue_free())

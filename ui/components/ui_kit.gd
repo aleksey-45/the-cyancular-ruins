@@ -2,7 +2,6 @@ class_name UiKit
 extends RefCounted
 
 # 创建容器和通用控件，布局使用 UiDesign 的间距常量，样式来自主题类型变体。
-# 控件布局与样式约定见 docs/construction/2026-11-23-ui-full-replacement-plan.md 的「实现约定」。
 
 ## 添加铺满父控件的边距容器，返回其中的页面内容容器。
 static func page(parent: Control, margin: int = UiDesign.SP_6, gap: int = UiDesign.SP_5) -> VBoxContainer:
@@ -65,14 +64,23 @@ static func card(parent: Control, title := "") -> Card:
 	vb.add_child(body)
 	return panel
 
-static func spin_row(parent: Control, text: String, minimum: int, maximum: int, value: int, font_size := 0) -> SpinBox:
-	var row := HBoxContainer.new()
-	parent.add_child(row)
-	var label := Label.new()
-	label.text = text
-	if font_size > 0: label.add_theme_font_size_override("font_size", font_size)
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(label)
+static func label(parent: Control, text: String, color := UiDesign.C_TEXT) -> Label:
+	var node := UiDesign.label(text, UiDesign.T_SMALL, color)
+	parent.add_child(node)
+	return node
+
+static func button(parent: Control, text: String, action: Callable) -> Button:
+	var node := Button.new()
+	node.text = text
+	node.theme_type_variation = &"ToolButton"
+	node.pressed.connect(action)
+	parent.add_child(node)
+	return node
+
+static func spin_row(parent: Control, text: String, minimum: int, maximum: int, value: int) -> SpinBox:
+	var row := UiDesign.box(parent, UiDesign.SP_2, false)
+	var caption := label(row, text)
+	caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var spin := SpinBox.new()
 	spin.min_value = minimum
 	spin.max_value = maximum

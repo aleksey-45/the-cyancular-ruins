@@ -627,6 +627,8 @@ func _workflow(tree: SceneTree) -> void:
 	tree.root.add_child(editor)
 	await tree.process_frame
 	editor._files.open_document(_sample(), "")
+	expect(editor._inspector.param_rows.width.visible and not editor._points.visible,
+			"the initial brush only shows its own inspector controls")
 	var autosave_target := path.get_basename() + "-autosave.cyrm"
 	editor._files.save(autosave_target)
 	var saved := FileAccess.get_file_as_bytes(autosave_target)
@@ -636,6 +638,8 @@ func _workflow(tree: SceneTree) -> void:
 	NetSession.notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
 	await tree.process_frame
 	var quit_prompt: ConfirmationDialog = editor.find_children("*", "ConfirmationDialog", true, false).back()
+	expect(editor.theme == UiDesign.MENU_THEME and quit_prompt.get_ok_button().get_theme_stylebox("normal") ==
+			UiDesign.MENU_THEME.get_stylebox("normal", "ToolButton"), "editor and confirmation use the shared theme")
 	expect(quit_prompt.visible and edited.dirty(), "closing a dirty editor gives the player time to cancel")
 	quit_prompt.hide()
 	await tree.process_frame

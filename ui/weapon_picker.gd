@@ -19,13 +19,12 @@ func _init(disabled: Array[int], columns: int, height: float) -> void:
 	custom_minimum_size.y = height
 	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	follow_focus = true
-	get_v_scroll_bar().theme_type_variation = &"Kit"
 
 	var list := _make_list(columns)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(list)
 	for id: int in WeaponRegistry.enabled_ids():
-		var check := UiDesign.ui_check()
+		var check := CheckButton.new()
 		check.text = WeaponRegistry.name_of(id)
 		check.icon = WeaponIcons.silhouette(id)
 		check.button_pressed = disabled.has(id)

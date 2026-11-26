@@ -14,9 +14,8 @@ func _initialize() -> void:
 	_field_variants(theme)
 	_button_variants(theme)
 	_panel_variants(theme)
-	_kit_variants(theme)
-	_flat_editor_variants(theme)
 	_other_controls(theme)
+	_editor_controls(theme)
 	var error := ResourceSaver.save(theme, OUT_THEME)
 	if error != OK:
 		printerr("GEN THEME: " + error_string(error))
@@ -201,116 +200,46 @@ func _carved_body(pad: Vector2) -> StyleBoxFlat:
 	return body
 
 
-# Kit 为多类控件提供共用的主题项。各控件按名称查找所需的主题项，TabContainer 和 AcceptDialog 共用 panel。
-# 对话框也会先查 Kit，再沿自身的类继承链查找。
-func _kit_variants(t: Theme) -> void:
-	t.set_type_variation("Kit", "Control")
+func _editor_controls(t: Theme) -> void:
+	var well := Style.flat(Style.C_FIELD, Style.C_BORDER_DIM, 1, Style.SP_2, Style.SP_1)
+	var hover := Style.flat(Style.C_BTN_FILL_HI, Style.C_BORDER, 1, Style.SP_2, Style.SP_1)
+	var active := Style.flat(Style.C_ROW, Style.C_ACCENT, 1, Style.SP_2, Style.SP_1)
+	var focus := active.duplicate() as StyleBoxFlat
+	focus.draw_center = false
+	t.set_type_variation("ToolButton", "Button")
+	t.set_font_size("font_size", "ToolButton", Style.T_SMALL)
+	t.set_color("font_color", "ToolButton", Style.C_TEXT)
+	t.set_color("font_pressed_color", "ToolButton", Style.C_ACCENT)
+	t.set_stylebox("normal", "ToolButton", well)
+	t.set_stylebox("hover", "ToolButton", hover)
+	t.set_stylebox("pressed", "ToolButton", active)
+	t.set_stylebox("hover_pressed", "ToolButton", active)
+	t.set_stylebox("focus", "ToolButton", focus)
+	t.set_type_variation("ToolPrimary", "ToolButton")
+	t.set_color("font_color", "ToolPrimary", Style.C_GOLD)
 
-	# 开关和复选框共用 CheckButton 的胶囊形图标。
-	t.set_font_size("font_size", "Kit", Style.T_H2)
-	t.set_color("font_color", "Kit", Style.C_TEXT)
-	t.set_color("font_hover_color", "Kit", Style.C_ACCENT)
-	t.set_color("font_pressed_color", "Kit", Style.C_ACCENT)
-	t.set_color("font_focus_color", "Kit", Style.C_TEXT)
-	t.set_icon("unchecked", "Kit", SWITCH_OFF)
-	t.set_icon("checked", "Kit", SWITCH_ON)
+	t.set_stylebox("panel", "ItemList", well)
+	t.set_stylebox("selected", "ItemList", active)
+	t.set_stylebox("selected_focus", "ItemList", active)
+	t.set_stylebox("normal", "TextEdit", well)
+	t.set_stylebox("focus", "TextEdit", focus)
+	for kind in ["ItemList", "TextEdit", "FoldableContainer"]:
+		t.set_color("font_color", kind, Style.C_TEXT)
+		t.set_font_size("font_size", kind, Style.T_SMALL)
+	for state in ["title_panel", "title_collapsed_panel"]:
+		t.set_stylebox(state, "FoldableContainer", well)
+	for state in ["title_hover_panel", "title_collapsed_hover_panel"]:
+		t.set_stylebox(state, "FoldableContainer", hover)
 
-	# 滚动条使用深色轨道，滑块在悬停和按下时使用强调色。
-	var sb_pad := Style.SP_1
-	t.set_stylebox("scroll", "Kit", Style.flat(Style.C_BTN_FILL_DN, Color.TRANSPARENT, 0, sb_pad, sb_pad))
-	t.set_stylebox("scroll_focus", "Kit", Style.flat(Style.C_BTN_FILL_DN, Color.TRANSPARENT, 0, sb_pad, sb_pad))
-	t.set_stylebox("grabber", "Kit", Style.flat(Style.C_BORDER_DIM, Color.TRANSPARENT, 0, sb_pad, sb_pad))
-	t.set_stylebox("grabber_highlight", "Kit", Style.flat(Style.C_ACCENT, Color.TRANSPARENT, 0, sb_pad, sb_pad))
-	t.set_stylebox("grabber_pressed", "Kit", Style.flat(Style.C_ACCENT, Color.TRANSPARENT, 0, sb_pad, sb_pad))
-
-	# TabContainer 将选项卡样式、文字颜色和间距应用到内部的 TabBar。
-	t.set_stylebox("panel", "Kit",
-			Style.flat(Style.C_SURFACE, Style.C_BORDER, Style.BORDER_W, Style.SP_4, Style.SP_4))
-	t.set_stylebox("tabbar_background", "Kit",
-			Style.flat(Style.C_HEADER, Color.TRANSPARENT, 0, Style.SP_1, Style.SP_1))
-	t.set_stylebox("tab_selected", "Kit",
-			Style.flat(Style.C_SURFACE, Style.C_ACCENT, Style.BORDER_W, Style.SP_4, Style.SP_2))
-	t.set_stylebox("tab_hovered", "Kit",
-			Style.flat(Style.C_BTN_FILL_HI, Style.C_BORDER_DIM, Style.BORDER_W_DIM, Style.SP_4, Style.SP_2))
-	t.set_stylebox("tab_unselected", "Kit",
-			Style.flat(Style.C_HEADER, Style.C_BORDER_DIM, Style.BORDER_W_DIM, Style.SP_4, Style.SP_2))
-	t.set_stylebox("tab_disabled", "Kit",
-			Style.flat(Style.C_BTN_FILL_DN, Style.C_BORDER_DIM, Style.BORDER_W_DIM, Style.SP_4, Style.SP_2))
-	t.set_stylebox("tab_focus", "Kit",
-			Style.flat(Style.C_TRANSPARENT, Style.C_ACCENT, Style.BORDER_W_DIM, Style.SP_4, Style.SP_2))
-	t.set_color("font_selected_color", "Kit", Style.C_TEXT)
-	t.set_color("font_unselected_color", "Kit", Style.C_TEXT_DIM)
-	t.set_color("font_hovered_color", "Kit", Style.C_ACCENT)
-	t.set_color("font_disabled_color", "Kit", Style.C_TEXT_MUTE)
-	t.set_color("drop_mark_color", "Kit", Style.C_ACCENT)
-	t.set_constant("side_margin", "Kit", Style.SP_2)
-	t.set_constant("tab_separation", "Kit", 0)
-	t.set_constant("icon_separation", "Kit", Style.SP_1)
-	t.set_constant("outline_size", "Kit", 0)
-
-	# 横向和纵向分隔容器共用 SplitContainer 定义的主题项。
-	t.set_stylebox("split_bar_background", "Kit",
-			Style.flat(Style.C_BTN_FILL_DN, Style.C_BORDER_DIM, Style.BORDER_W_DIM, Style.SP_1, Style.SP_1))
-	t.set_constant("separation", "Kit", Style.SP_2)
-	t.set_constant("minimum_grab_thickness", "Kit", Style.SP_3)
-	t.set_constant("autohide", "Kit", 0)
-
-	# 对话框使用 Window 的 embedded_border 绘制嵌入式窗口边框。
-	t.set_stylebox("embedded_border", "Kit",
-			Style.flat(Style.C_SURFACE, Style.C_BORDER, Style.BORDER_W, Style.SP_1, Style.SP_1))
-	t.set_stylebox("embedded_unfocused_border", "Kit",
-			Style.flat(Style.C_SURFACE, Style.C_BORDER_DIM, Style.BORDER_W_DIM, Style.SP_1, Style.SP_1))
-	t.set_color("title_color", "Kit", Style.C_TEXT)
-	t.set_font_size("title_font_size", "Kit", Style.T_H2)
-	t.set_constant("title_height", "Kit", Style.SP_7)
-	t.set_constant("close_h_offset", "Kit", Style.SP_2)
-	t.set_constant("close_v_offset", "Kit", Style.SP_2)
-	t.set_constant("buttons_separation", "Kit", Style.SP_2)
-	t.set_constant("buttons_min_width", "Kit", Style.SP_9)
-	t.set_constant("buttons_min_height", "Kit", Style.SP_7)
-
-
-func _flat_editor_variants(t: Theme) -> void:
-	# 编辑器的工具栏按钮、工具列和图层行默认透明，悬停时显示底色，焦点用强调色边框标记。
-	for name in ["FlatButton", "ToolButton"]:
-		t.set_type_variation(name, "Button")
-		t.set_font_size("font_size", name, Style.T_LABEL)
-		t.set_stylebox("normal", name, Style.flat(Style.C_TRANSPARENT, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
-		t.set_stylebox("hover", name, Style.flat(Style.C_BTN_FILL_HI, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
-		t.set_stylebox("pressed", name, Style.flat(Style.C_BTN_FILL_DN, Style.C_ACCENT, 1, Style.SP_2, Style.SP_1))
-		t.set_stylebox("focus", name, Style.flat(Style.C_TRANSPARENT, Style.C_ACCENT, 1, Style.SP_2, Style.SP_1))
-		t.set_stylebox("disabled", name, Style.flat(Style.C_TRANSPARENT, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
-		t.set_color("font_color", name, Style.C_TEXT_DIM)
-		t.set_color("font_hover_color", name, Style.C_TEXT)
-		t.set_color("font_focus_color", name, Style.C_TEXT)
-		t.set_color("font_pressed_color", name, Style.C_ACCENT)
-		t.set_color("font_disabled_color", name, Style.C_TEXT_MUTE)
-
-	# 当前工具和图层用淡色底与左侧 2 像素强调色边框标记。
-	var active_left := Style.flat(Style.C_ROW, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1)
-	active_left.border_width_left = 2
-	active_left.border_color = Style.C_ACCENT
-	for name in ["ToolActive", "LayerActive"]:
-		t.set_type_variation(name, "Button")
-		t.set_font_size("font_size", name, Style.T_LABEL)
-		t.set_stylebox("normal", name, active_left)
-		t.set_stylebox("hover", name, active_left)
-		t.set_stylebox("pressed", name, active_left)
-		t.set_stylebox("focus", name, active_left)
-		t.set_stylebox("disabled", name, active_left)
-		t.set_color("font_color", name, Style.C_ACCENT)
-		t.set_color("font_hover_color", name, Style.C_ACCENT)
-		t.set_color("font_focus_color", name, Style.C_ACCENT)
-
-	# 普通图层行和工具栏按钮一样，默认透明，悬停时显示底色。
-	t.set_type_variation("LayerRow", "Button")
-	t.set_font_size("font_size", "LayerRow", Style.T_LABEL)
-	t.set_stylebox("normal", "LayerRow", Style.flat(Style.C_TRANSPARENT, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
-	t.set_stylebox("hover", "LayerRow", Style.flat(Style.C_ROW, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
-	t.set_stylebox("pressed", "LayerRow", Style.flat(Style.C_ROW, Style.C_ACCENT, 1, Style.SP_2, Style.SP_1))
-	t.set_stylebox("focus", "LayerRow", Style.flat(Style.C_ROW, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
-	t.set_color("font_color", "LayerRow", Style.C_TEXT_DIM)
-	t.set_color("font_hover_color", "LayerRow", Style.C_TEXT)
+	var border := Style.flat(Style.C_HEADER, Style.C_BORDER, 1, Style.SP_2, Style.SP_2)
+	border.expand_margin_top = Style.SP_7
+	t.set_stylebox("embedded_border", "Window", border)
+	t.set_stylebox("embedded_unfocused_border", "Window", border)
+	t.set_constant("title_height", "Window", Style.SP_7)
+	t.set_font_size("title_font_size", "Window", Style.T_SMALL)
+	t.set_color("title_color", "Window", Style.C_GOLD)
+	t.set_stylebox("panel", "AcceptDialog", t.get_stylebox("panel", "Card"))
+	t.set_constant("buttons_min_width", "AcceptDialog", Style.SP_9 + Style.SP_6)
 
 
 func _other_controls(t: Theme) -> void:
@@ -325,18 +254,28 @@ func _other_controls(t: Theme) -> void:
 	var lef := le.duplicate() as StyleBoxFlat
 	lef.border_color = Style.C_ACCENT
 	t.set_stylebox("focus", "LineEdit", lef)
-	t.set_font_size("font_size", "LineEdit", Style.T_LABEL)
+	t.set_font_size("font_size", "LineEdit", Style.T_SMALL)
 	t.set_color("font_color", "LineEdit", Style.C_TEXT)
 	t.set_color("font_placeholder_color", "LineEdit", Style.C_TEXT_DIM)
 	t.set_color("caret_color", "LineEdit", Style.C_ACCENT)
 
-	t.set_font_size("font_size", "CheckButton", Style.T_H2)
-	t.set_color("font_color", "CheckButton", Style.C_TEXT)
-	t.set_color("font_hover_color", "CheckButton", Style.C_ACCENT)
-	t.set_color("font_pressed_color", "CheckButton", Style.C_ACCENT)
-	t.set_color("font_focus_color", "CheckButton", Style.C_TEXT)
-	t.set_icon("unchecked", "CheckButton", SWITCH_OFF)
-	t.set_icon("checked", "CheckButton", SWITCH_ON)
+	for kind in ["CheckButton", "CheckBox"]:
+		t.set_font_size("font_size", kind, Style.T_H2 if kind == "CheckButton" else Style.T_SMALL)
+		t.set_color("font_color", kind, Style.C_TEXT)
+		t.set_color("font_hover_color", kind, Style.C_ACCENT)
+		t.set_color("font_pressed_color", kind, Style.C_ACCENT)
+		t.set_color("font_focus_color", kind, Style.C_TEXT)
+		t.set_icon("unchecked", kind, SWITCH_OFF)
+		t.set_icon("checked", kind, SWITCH_ON)
+
+	var pad := Style.SP_1
+	var scroll := Style.flat(Style.C_BTN_FILL_DN, Color.TRANSPARENT, 0, pad, pad)
+	var grabber := Style.flat(Style.C_ACCENT, Color.TRANSPARENT, 0, pad, pad)
+	t.set_stylebox("scroll", "ScrollBar", scroll)
+	t.set_stylebox("scroll_focus", "ScrollBar", scroll)
+	t.set_stylebox("grabber", "ScrollBar", Style.flat(Style.C_BORDER_DIM, Color.TRANSPARENT, 0, pad, pad))
+	t.set_stylebox("grabber_highlight", "ScrollBar", grabber)
+	t.set_stylebox("grabber_pressed", "ScrollBar", grabber)
 
 	var track := StyleBoxFlat.new()
 	track.bg_color = Style.C_BORDER_DIM
@@ -361,7 +300,7 @@ func _other_controls(t: Theme) -> void:
 	t.set_stylebox("focus", "OptionButton", ob_focus)
 	t.set_stylebox("disabled", "OptionButton",
 			Style.flat(Style.C_BTN_FILL_DN, Style.C_BORDER_DIM, 1, Style.SP_3, Style.SP_2))
-	t.set_font_size("font_size", "OptionButton", Style.T_LABEL)
+	t.set_font_size("font_size", "OptionButton", Style.T_SMALL)
 	t.set_color("font_color", "OptionButton", Style.C_TEXT)
 	t.set_color("font_hover_color", "OptionButton", Style.C_ACCENT)
 	t.set_color("font_pressed_color", "OptionButton", Style.C_ACCENT)
@@ -372,7 +311,7 @@ func _other_controls(t: Theme) -> void:
 			Style.flat(Style.C_SURFACE, Style.C_BORDER, 1, Style.SP_2, Style.SP_2))
 	t.set_stylebox("hover", "PopupMenu",
 			Style.flat(Style.C_BTN_FILL_HI, Color.TRANSPARENT, 0, Style.SP_3, Style.SP_2))
-	t.set_font_size("font_size", "PopupMenu", Style.T_LABEL)
+	t.set_font_size("font_size", "PopupMenu", Style.T_SMALL)
 	t.set_color("font_color", "PopupMenu", Style.C_TEXT)
 	t.set_color("font_hover_color", "PopupMenu", Style.C_ACCENT)
 	t.set_color("font_disabled_color", "PopupMenu", Style.C_TEXT_DIM)
@@ -389,7 +328,7 @@ func _other_controls(t: Theme) -> void:
 			Style.flat(Style.C_TRANSPARENT, Style.C_ACCENT, 1, Style.SP_2, Style.SP_1))
 	t.set_stylebox("disabled", "MenuButton",
 			Style.flat(Style.C_TRANSPARENT, Color.TRANSPARENT, 0, Style.SP_2, Style.SP_1))
-	t.set_font_size("font_size", "MenuButton", Style.T_LABEL)
+	t.set_font_size("font_size", "MenuButton", Style.T_SMALL)
 	t.set_color("font_color", "MenuButton", Style.C_TEXT)
 	t.set_color("font_hover_color", "MenuButton", Style.C_TEXT)
 	t.set_color("font_focus_color", "MenuButton", Style.C_TEXT)

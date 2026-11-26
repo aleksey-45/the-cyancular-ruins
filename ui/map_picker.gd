@@ -19,7 +19,6 @@ func setup(initial: String, max_height: float, title := "地图") -> void:
 	scroll.custom_minimum_size.y = max_height
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.follow_focus = true
-	scroll.get_v_scroll_bar().theme_type_variation = &"Kit"
 	add_child(scroll)
 
 	_grid.columns = 2

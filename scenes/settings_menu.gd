@@ -63,7 +63,6 @@ func _build_page() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.get_v_scroll_bar().theme_type_variation = &"Kit"
 	page.add_child(scroll)
 
 	var cols := HBoxContainer.new()
@@ -180,7 +179,7 @@ func _slider_row(parent: Control, label_text: String, node_name: String) -> HSli
 
 
 func _switch_row(parent: Control, label_text: String, node_name: String) -> CheckButton:
-	var cb := UiDesign.ui_check()
+	var cb := CheckButton.new()
 	cb.name = node_name
 	_form_row(parent, label_text, cb, false)
 	return cb

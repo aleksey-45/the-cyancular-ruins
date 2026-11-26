@@ -115,12 +115,6 @@ static func ui_field() -> LineEdit:
 	return le
 
 
-static func ui_check() -> CheckButton:
-	var cb := CheckButton.new()
-	_apply_variation(cb, &"Kit")
-	return cb
-
-
 class Header extends PanelContainer:
 	var title: Label
 

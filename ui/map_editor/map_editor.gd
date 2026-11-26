@@ -1,7 +1,6 @@
 class_name MapEditor
 extends Control
 
-const HEADING_COLOR := Color("#a9dcca")
 const POINT_HINT := "拖动移动点位 · 双击试玩"
 const TOOLS := {
 	"brush": {"label": "画笔", "key": KEY_B, "params": ["width", "material", "color"],
@@ -22,7 +21,7 @@ var _tool: Dictionary:
 var session := MapEditSession.new()
 var brush := MapBrush.new()
 var canvas := MapEditCanvas.new()
-var _workspace := VBoxContainer.new()
+var _workspace: VBoxContainer
 var _filename: Label
 var _modified: Label
 var _status: Label
@@ -33,7 +32,6 @@ var _toolbar: MapEditorToolbar
 var _trial: MapEditorTrial
 var _inspector: MapEditorInspector
 var _palette: MapEditorToolPalette
-var _clipboard: Array = []
 var _shortcuts: Dictionary[int, Callable] = {}
 var _layers_panel: MapEditorLayers
 var _texture_layer := CyrmMap.SCENE
@@ -46,17 +44,14 @@ var _auto_quit := true
 func _ready() -> void:
 	_auto_quit = get_tree().auto_accept_quit
 	get_tree().auto_accept_quit = false
-	theme = preload("res://ui/map_editor/editor_theme.tres")
-	UiDesign.cover(self, UiDesign.shade(Color("#0e1519")))
-	add_child(_workspace)
-	_workspace.add_theme_constant_override("separation", 10)
-	_workspace.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 10)
+	theme = UiDesign.MENU_THEME
+	UiDesign.cover(self, UiDesign.shade(UiDesign.C_BG))
+	_workspace = UiKit.page(self, UiDesign.SP_3, UiDesign.SP_2)
 	_files = MapEditorFiles.new(session, _say)
 	_files.draft_path = draft_path
 	add_child(_files)
 	_trial = MapEditorTrial.new()
 	add_child(_trial)
-	_clipboard = [["复制选区", session.copy_selection, KEY_C], ["剪切选区", _cut, KEY_X], ["粘贴", _paste, KEY_V]]
 	_build_ui()
 	_trial.setup(session, canvas, _workspace, _say)
 	session.changed.connect(_sync_document)
@@ -79,6 +74,7 @@ func _ready() -> void:
 	else:
 		_files.open_document(draft.map, draft.path, true)
 		_say("已恢复上次未保存的草稿")
+	_sync_context()
 
 func _exit_tree() -> void:
 	get_tree().auto_accept_quit = _auto_quit
@@ -118,9 +114,9 @@ func _build_ui() -> void:
 	_toolbar.play_requested.connect(start_trial)
 	_toolbar.exit_requested.connect(_request_exit)
 
-	var body := UiDesign.box(_workspace, 8, false)
+	var body := UiDesign.box(_workspace, UiDesign.SP_2, false)
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var left := _sidebar(body, 292)
+	var left := _sidebar(body, 312)
 	_palette = MapEditorToolPalette.new()
 	left.add_child(_palette)
 	_palette.setup(TOOLS, active_tool)
@@ -129,31 +125,30 @@ func _build_ui() -> void:
 	left.add_child(HSeparator.new())
 	_build_materials(left)
 
-	var center := UiDesign.box(body, 4, true)
+	var center := UiDesign.box(body, UiDesign.SP_1, true)
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var strip := PanelContainer.new()
-	center.add_child(strip)
-	var document := _row(strip)
-	_modified = _label(document, "● 未保存", 24, Color("#e9c58b"))
+	var document := UiKit.toolbar(center)
+	_modified = UiKit.label(document, "● 未保存", UiDesign.C_WARN)
 	_filename = _flex_label(document)
-	_dimensions = _label(document, "", 24, Color("#9aada7"))
+	_dimensions = UiKit.label(document, "", UiDesign.C_TEXT_DIM)
 	document.add_child(VSeparator.new())
-	_button(document, "−", canvas.zoom_at.bind(0.8)).tooltip_text = "缩小"
-	var zoom := _label(document, "")
+	UiKit.button(document, "−", canvas.zoom_at.bind(0.8)).tooltip_text = "缩小"
+	var zoom := UiKit.label(document, "")
 	zoom.custom_minimum_size.x = 72
 	zoom.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	canvas.zoom_changed.connect(func(value: float) -> void: zoom.text = "%d%%" % roundi(value * 100.0 / 16))
-	_button(document, "+", canvas.zoom_at.bind(1.25)).tooltip_text = "放大"
-	_button(document, "适配全图", canvas.fit)
+	UiKit.button(document, "+", canvas.zoom_at.bind(1.25)).tooltip_text = "放大"
+	UiKit.button(document, "适配全图", canvas.fit)
 	center.add_child(canvas)
 
-	var right := _sidebar(body, 304)
+	var right := _sidebar(body, 352)
 	_build_layers(right)
 	right.add_child(HSeparator.new())
-	_context_title = _label(right, "画笔", 24, HEADING_COLOR)
+	_context_title = UiKit.label(right, "画笔", UiDesign.C_ACCENT)
 	_inspector = MapEditorInspector.new()
 	right.add_child(_inspector)
-	_inspector.setup(session, brush, canvas, _clipboard, _sync_context)
+	_inspector.setup(session, brush, canvas,
+			[["复制选区", session.copy_selection], ["剪切选区", _cut], ["粘贴", _paste]], _sync_context)
 	_points = _inspector.points
 	_points.place_button.toggled.connect(func(_placing: bool) -> void:
 		canvas.cancel()
@@ -164,9 +159,9 @@ func _build_ui() -> void:
 	_points.point_activated.connect(func(id: int) -> void:
 		canvas.center_on(session.map.points[id].cell))
 
-	var footer := _row(_workspace)
+	var footer := UiKit.status_bar(_workspace)
 	_status = _flex_label(footer)
-	var coords := _label(footer, "")
+	var coords := UiKit.label(footer, "")
 	canvas.cursor_moved.connect(func(p: Vector2i) -> void:
 		coords.text = "子格 %d, %d" % [p.x, p.y] if session.bounds.has_point(p) else "")
 
@@ -307,6 +302,7 @@ func _point_pressed(cell: Vector2i, id: int, double_click: bool) -> void:
 func _notes_dialog() -> void:
 	var dialog := ConfirmationDialog.new()
 	dialog.title = "地图注记"
+	dialog.ok_button_text = "应用"
 	var field := TextEdit.new()
 	field.custom_minimum_size = Vector2(650, 290)
 	field.text = session.map.notes
@@ -354,34 +350,19 @@ func _say(text: String) -> void:
 	_status.text = text
 	_status.tooltip_text = text
 
-static func _row(parent: Control) -> HBoxContainer:
-	return UiDesign.box(parent, 6, false) as HBoxContainer
-
-static func _label(parent: Control, text: String, font_size := 24, color := Color(0.812, 0.859, 0.843)) -> Label:
-	var label := UiDesign.label(text, font_size, color)
-	parent.add_child(label)
-	return label
-
 static func _flex_label(parent: Control) -> Label:
-	var label := _label(parent, "")
+	var label := UiKit.label(parent, "")
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	return label
 
-static func _button(parent: Control, text: String, action: Callable) -> Button:
-	var button := Button.new()
-	button.text = text
-	parent.add_child(button)
-	button.pressed.connect(action)
-	return button
-
 static func _sidebar(parent: Control, width: float) -> VBoxContainer:
-	var panel := PanelContainer.new()
+	var panel := UiDesign.ui_panel("card")
 	panel.custom_minimum_size.x = width
 	parent.add_child(panel)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	panel.add_child(scroll)
-	var column := UiDesign.box(scroll, 9, true) as VBoxContainer
+	var column := UiDesign.box(scroll, UiDesign.SP_2, true) as VBoxContainer
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return column

@@ -20,16 +20,12 @@ func setup(p_session: MapEditSession, p_canvas: MapEditCanvas) -> void:
 	_build()
 
 func _build() -> void:
-	add_theme_constant_override("separation", 6)
+	add_theme_constant_override("separation", UiDesign.SP_2)
 	place_button.text = "放置点位（连续）"
 	place_button.tooltip_text = "勾选后单击画布放置所选类型，取消勾选可拖动已有点位"
 	add_child(place_button)
 
-	var type_label := Label.new()
-	type_label.text = "点位类型"
-	type_label.tooltip_text = "出生点、复活点和敌人出生点都在这里选择"
-	type_label.add_theme_font_size_override("font_size", 20)
-	add_child(type_label)
+	UiKit.label(self, "点位类型")
 
 	_type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_type.tooltip_text = "选择要放置的出生点或敌人类型"
@@ -43,7 +39,6 @@ func _build() -> void:
 		_option("敌人 · " + str(ENEMY_LABELS.get(id, id)), {"kind": "enemy", "type": id})
 
 	_list.custom_minimum_size.y = 270
-	_list.add_theme_font_size_override("font_size", 20)
 	_list.item_selected.connect(func(index: int) -> void:
 		point_selected.emit(_list.get_item_metadata(index)))
 	_list.item_activated.connect(func(index: int) -> void:
@@ -51,10 +46,8 @@ func _build() -> void:
 	add_child(_list)
 
 	add_child(_details)
-	var move_button := _button("移至…", func() -> void: canvas.pick_point_destination())
-	move_button.tooltip_text = "单击目标子格移动所选点位"
-	_details.add_child(move_button)
-	_details.add_child(_button("删除", func() -> void: session.commit_point(session.selected_point_id, {})))
+	UiKit.button(_details, "移至…", canvas.pick_point_destination).tooltip_text = "单击目标子格移动所选点位"
+	UiKit.button(_details, "删除", func() -> void: session.commit_point(session.selected_point_id, {}))
 
 func sync() -> void:
 	var placing := is_placing()
@@ -122,10 +115,3 @@ func _index(id: int) -> int:
 	for i in _list.item_count:
 		if _list.get_item_metadata(i) == id: return i
 	return -1
-
-func _button(text: String, action: Callable) -> Button:
-	var button := Button.new()
-	button.text = text
-	button.add_theme_color_override("font_color", Color("#d9e3df"))
-	button.pressed.connect(action)
-	return button
