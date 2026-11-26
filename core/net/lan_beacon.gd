@@ -1,62 +1,43 @@
 class_name LanBeacon
 extends RefCounted
 
-# 服务器按 LanDiscovery 定义的格式和端口广播房间信息。
-# 每轮分别向 IPv4 受限广播地址和按 /24 推算的广播地址发送，单次失败后下轮照常广播。
-
-const PORT := LanDiscovery.PORT
-const INTERVAL := LanDiscovery.INTERVAL
-const BROADCAST := "255.255.255.255"
+# Windows 的网卡 API 提供实际 IPv4 掩码。macOS 的 ifconfig 直接给出广播地址。
+const WINDOWS_BROADCASTS := """
+foreach ($nic in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+	if ($nic.OperationalStatus -ne 'Up' -or $nic.NetworkInterfaceType -eq 'Loopback') { continue }
+	foreach ($u in $nic.GetIPProperties().UnicastAddresses) {
+		if ($u.Address.AddressFamily -ne 'InterNetwork') { continue }
+		$ip = $u.Address.GetAddressBytes()
+		$mask = $u.IPv4Mask.GetAddressBytes()
+		if ($mask[3] -ge 254) { continue }
+		$octets = for ($i = 0; $i -lt 4; $i++) { $ip[$i] -bor (255 -bxor $mask[$i]) }
+		'broadcast ' + ($octets -join '.')
+	}
+}
+"""
 
 var _peer := PacketPeerUDP.new()
-var _targets: PackedStringArray = []
-var _room_info := Callable()
+var _targets := PackedStringArray(["255.255.255.255"])
+var _room_info: Callable
 var _next_at := 0.0
-var _running := false
 
-## 开始广播。每轮发送前调用 room_info，取得 LanDiscovery.encode_room 所需的字段。
-## 广播已启动时直接返回。每次重新启动时，根据当前本机地址计算广播目标。
-func start(room_info: Callable) -> void:
-	if _running:
-		return
-	_peer = PacketPeerUDP.new()
+func _init(room_info: Callable) -> void:
+	_room_info = room_info
 	_peer.bind(0)
 	_peer.set_broadcast_enabled(true)
-	_room_info = room_info
-	_targets = _broadcast_targets()
-	_next_at = 0.0
-	_running = true
-
-## 停止广播并释放套接字。
-func stop() -> void:
-	if not _running:
-		return
-	_running = false
-	_peer.close()
-	_targets.clear()
-	_room_info = Callable()
+	var output := []
+	match OS.get_name():
+		"Windows": OS.execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_BROADCASTS], output)
+		"macOS": OS.execute("/sbin/ifconfig", ["-a", "inet"], output)
+	var pattern := RegEx.create_from_string(r"\bbroadcast ([0-9.]+)")
+	for entry in pattern.search_all("".join(output)):
+		var target := entry.get_string(1)
+		if not _targets.has(target): _targets.append(target)
 
 func tick(now: float) -> void:
-	if not _running or now < _next_at:
-		return
-	_next_at = now + INTERVAL
-	var info: Dictionary = _room_info.call()
-	var packet := LanDiscovery.encode_room(info)
-	for address in _targets:
-		if _peer.set_dest_address(address, PORT) == OK:
+	if now < _next_at: return
+	_next_at = now + LanDiscovery.INTERVAL
+	var packet := LanDiscovery.encode_room(_room_info.call())
+	for target in _targets:
+		if _peer.set_dest_address(target, LanDiscovery.PORT) == OK:
 			_peer.put_packet(packet)
-
-## 返回 IPv4 受限广播地址，以及将本机 IPv4 地址按 /24 推算得到的广播地址（x.y.z.255）。
-func _broadcast_targets() -> PackedStringArray:
-	var targets := PackedStringArray([BROADCAST])
-	var seen := {BROADCAST: true}
-	for address in IP.get_local_addresses():
-		var octets := address.split(".")
-		if octets.size() != 4 or not address.is_valid_ip_address():
-			continue
-		var broadcast := "%s.%s.%s.255" % [octets[0], octets[1], octets[2]]
-		if seen.has(broadcast):
-			continue
-		seen[broadcast] = true
-		targets.append(broadcast)
-	return targets

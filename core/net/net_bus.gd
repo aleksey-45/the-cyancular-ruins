@@ -25,7 +25,6 @@ var _active := false
 var connection_generation := 0
 var _codecs: Dictionary = {}
 var _ping_sample_at := 0
-var _protocol_waiting_at := 0
 var _pending_messages: Array = []
 
 func pick_free_port() -> int:
@@ -81,7 +80,6 @@ func stop() -> void:
 	_transport.close()
 	_pending_messages.clear()
 	_codecs.clear()
-	_protocol_waiting_at = 0
 	is_server_mode = false
 
 func can_send_to_server() -> bool:
@@ -172,9 +170,6 @@ func _physics_process(_delta: float) -> void:
 		var peer: int = message[1]
 		match message[0]:
 			0: _receive(peer, message[2], message[3])
-			1:
-				if not is_server_mode:
-					_protocol_waiting_at = Time.get_ticks_msec()
 			2, 3:
 				_codecs.erase(peer)
 				if is_server_mode:
@@ -186,8 +181,6 @@ func _physics_process(_delta: float) -> void:
 	if generation == connection_generation: _pending_messages = messages.slice(dispatched)
 	if _active and not is_server_mode and Time.get_ticks_msec() - _ping_sample_at >= 1000:
 		_update_ping()
-	if _active and _protocol_waiting_at > 0 and Time.get_ticks_msec() - _protocol_waiting_at > 5000:
-		_fail_protocol("服务器握手超时，请确认服务端与客户端使用相同版本")
 	PerformanceStats.end(PerformanceStats.NETWORK_DISPATCH, perf_dispatch)
 
 func _filter_receive_backlog(messages: Array) -> Array:
@@ -256,12 +249,10 @@ func _receive(peer: int, packet: PackedByteArray, received_us: int) -> void:
 		NetCodec.STATE:
 			var frame := codec.decode_state(reader)
 			if not frame.is_empty():
-				_protocol_waiting_at = 0
 				state_received.emit(frame)
 		_:
 			var payload: Variant = codec.decode_event(kind, reader)
 			if reader.valid:
-				_protocol_waiting_at = 0
 				event_received.emit(peer, kind, payload)
 	if not reader.valid and not is_server_mode:
 		_fail_protocol("收到无效联机数据")

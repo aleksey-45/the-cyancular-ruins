@@ -1,5 +1,16 @@
 extends "res://tests/case.gd"
 
+class UnavailableTunnel extends Tunnel:
+	var publications := 0
+	var lookups := 0
+	func start_host(_port: int, _code: String) -> String:
+		publications += 1
+		return "test relay unavailable"
+
+	func start_client(_code: String, _deadline: int) -> Dictionary:
+		lookups += 1
+		return {"error": "unexpected tunnel lookup"}
+
 const CLIENT_COUNT := RoomOptions.ROYALE_PLAYERS.y
 const INPUT := 0
 const STATE := 1
@@ -14,8 +25,9 @@ var _within_limit := true
 var _client_peers := PackedInt32Array()
 var _connection_errors: Array = []
 
-func run(_tree: SceneTree) -> void:
+func run(tree: SceneTree) -> void:
 	await _host_room()
+	await _unconfirmed_join(tree)
 	var oversized := PackedByteArray()
 	oversized.resize(64 * 1024 * 1024 + 1)
 	for flow in [INPUT, STATE, EVENT]:
@@ -48,13 +60,58 @@ func run(_tree: SceneTree) -> void:
 	expect(_within_limit, "poll never expands beyond its logical message limit")
 
 func _host_room() -> void:
-	var mode := WorldSpec.DUEL
-	var options := RoomOptions.normalized(mode, {"lan_public": false})
-	var problem := await NetSession.create_room({"mode": mode, "options": options})
-	expect(problem.is_empty() and PvpSession.can_rejoin() and PvpSession.room.get("your_role") == 1,
-			"hosting starts the dedicated room and returns the host's seat and rejoin token: %s" % problem)
+	var real_tunnel := NetSession._tunnel
+	var unavailable := UnavailableTunnel.new()
+	NetSession._tunnel = unavailable
+	var notices := []
+	var observe := func(value: String) -> void: notices.append(value)
+	NetSession.notice.connect(observe)
+	var problem := await NetSession.create_room(WorldSpec.DUEL, {}, false)
+	expect(problem.is_empty() and NetSession.connected() and NetSession.room.your_role == 1,
+			"hosting retains the seat when the remote entrance fails: %s" % problem)
+	if NetSession.connected():
+		var roster := NetSession.room.merged({"token": NetSession._token})
+		NetSession._on_event(1, NetEvent.Kind.ROOM, roster)
+		NetSession._on_event(1, NetEvent.Kind.ROOM, roster)
+		await NetSession.leave_room()
+	expect(unavailable.publications == 1 and notices.any(func(value: String) -> bool: return "test relay unavailable" in value),
+			"the host publishes once and reports the separate failure")
+	expect(NetSession.room.is_empty() and not NetSession.can_rejoin(), "leaving clears the admitted seat")
+	NetSession.notice.disconnect(observe)
 	NetSession.close()
-	PvpSession.room.clear()
+	NetSession._tunnel = real_tunnel
+
+func _unconfirmed_join(tree: SceneTree) -> void:
+	var server := GnsEndpoint.new()
+	var port := NetBus.pick_free_port()
+	if server.listen(port) != OK:
+		expect(false, "the admission fixture opens a local server")
+		return
+	var original := NetSession._tunnel
+	var tunnel := UnavailableTunnel.new()
+	NetSession._tunnel = tunnel
+	var code := "00048213"
+	for reason: String in ["房间已满", ""]:
+		var joins := []
+		var poll := func() -> void:
+			for message: Array in server.poll():
+				if message[0] != 0: continue
+				var packet: PackedByteArray = message[2]
+				joins.append(packet[2])
+				if not reason.is_empty():
+					var reply := NetCodec.new().encode_event(NetEvent.Kind.MESSAGE, reason)
+					server.send(message[1], EVENT, NetBus._wire(reply))
+		tree.physics_frame.connect(poll)
+		NetSession._discovery.update({"code": code, "port": port, "mode": WorldSpec.DUEL, "players": 1,
+				"max": 2, "in_match": false, "beta": false}, "127.0.0.1", Time.get_ticks_msec() / 1000.0)
+		var error := await NetSession.join_room(code)
+		tree.physics_frame.disconnect(poll)
+		expect(error == ("入房结果未确认" if reason.is_empty() else reason), "admission returns the actual outcome")
+		expect(joins == [NetCodec.EVENT + NetEvent.Kind.JOIN] and tunnel.lookups == 0,
+				"rejected and unanswered admissions each deliver exactly one JOIN")
+	server.close()
+	NetSession._tunnel = original
+	NetSession._discovery.stop()
 
 func _broadcast_and_order() -> void:
 	var targets := PackedInt32Array([-1])

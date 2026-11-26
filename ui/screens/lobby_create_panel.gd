@@ -3,7 +3,7 @@ extends PanelContainer
 
 # 联机建房表单，按当前对战模式提交地图、房间设置和规则选项。
 
-signal submitted(mode: String, options: Dictionary)
+signal submitted(mode: String, options: Dictionary, listed_nearby: bool)
 
 signal preference_changed(value: Variant, key: StringName)
 
@@ -30,7 +30,7 @@ var _prefs: Dictionary
 var _mode := WorldSpec.DUEL
 var _mode_buttons: Dictionary = {}
 var _collision := UiDesign.ui_check()
-var _lan_public := UiDesign.ui_check()
+var _listed_nearby := UiDesign.ui_check()
 var _full_heal := UiDesign.ui_check()
 var _limits: HBoxContainer
 var _duration: HBoxContainer
@@ -106,11 +106,11 @@ func _build_options() -> VBoxContainer:
 	_collision.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	options.add_child(_collision)
 
-	_lan_public.text = "对局域网展示房间卡片"
-	_lan_public.name = "LanPublicCheck"
-	_lan_public.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	_lan_public.set_pressed_no_signal(true)
-	options.add_child(_lan_public)
+	_listed_nearby.text = "对局域网展示房间卡片"
+	_listed_nearby.name = "ListedNearbyCheck"
+	_listed_nearby.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_listed_nearby.set_pressed_no_signal(true)
+	options.add_child(_listed_nearby)
 
 	_limits = _form_row(options, "LimitsRow")
 	_max_players = _slider(_limits, "人数上限:", RoomOptions.ROYALE_PLAYERS, DEFAULT_MAX_PLAYERS,
@@ -255,7 +255,7 @@ func _time_slider(parent: BoxContainer, field: String) -> void:
 
 func open(mode: String) -> void:
 	_collision.set_pressed_no_signal(false)
-	_lan_public.set_pressed_no_signal(true)
+	_listed_nearby.set_pressed_no_signal(true)
 	_choose_mode(mode)
 	show()
 
@@ -273,8 +273,7 @@ func _choose_mode(mode: String) -> void:
 
 
 func _submit() -> void:
-	var options := {"map": _map.selected, "player_collision": _collision.button_pressed,
-			"lan_public": _lan_public.button_pressed}
+	var options := {"map": _map.selected, "player_collision": _collision.button_pressed}
 	var selected := {"disabled_weapons": _weapons.disabled_weapons(),
 		"max_players": int(_max_players.value), "match_time": int(_match_time.value) * 60,
 		"round_full_heal": _full_heal.button_pressed}
@@ -282,7 +281,7 @@ func _submit() -> void:
 		options[key] = selected[key]
 	if not _prefs["time"].is_empty():
 		options.merge({"beta": true, "time": _prefs["time"]})
-	submitted.emit(_mode, options)
+	submitted.emit(_mode, options, _listed_nearby.button_pressed)
 
 
 func _unhandled_input(event: InputEvent) -> void:

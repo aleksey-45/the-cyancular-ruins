@@ -1,14 +1,10 @@
 class_name LobbyRoomCard
 extends Button
 
-# 局域网房间卡片。悬停、按下和禁用样式来自 RowButton 主题类型变体。
-# 子控件忽略鼠标输入，整张卡片可点击。控制器根据房间发现结果中的服务器地址和端口尝试直连。
-
-signal join_requested(code: String, endpoint: Dictionary)
+signal join_requested(code: String)
 
 const CARD_MIN_H := UiDesign.SP_9 + UiDesign.SP_8
 
-var _endpoint: Dictionary
 var _frame: MarginContainer
 var _row: HBoxContainer
 var _mode: Label
@@ -87,18 +83,17 @@ func _init() -> void:
 	pressed.connect(_on_pressed)
 
 
-func present(info: Dictionary) -> void:
-	_endpoint = {"ip": info["ip"], "port": info["port"]}
-	var mode := str(info["mode"])
-	var beta := bool(info["beta"])
-	var in_match := bool(info["in_match"])
+func present(info: RoomSummary) -> void:
+	var mode := info.mode
+	var beta := info.beta
+	var in_match := info.in_match
 	_mode.text = PvpSession.mode_name(mode, beta)
 	_mode.add_theme_color_override("font_color", _mode_color(mode))
 	_beta.visible = beta
 	_status.text = "对局中" if in_match else "等待中"
 	_status.add_theme_color_override("font_color", UiDesign.C_TEXT_DIM if in_match else UiDesign.C_ACCENT)
-	_code.text = str(info["code"])
-	_count.text = "人数 %d / %d" % [int(info["players"]), int(info["max"])]
+	_code.text = info.code
+	_count.text = "人数 %d / %d" % [info.occupied, info.capacity]
 	_fit_height()
 	# 延迟按场景树中生效的主题字体重新测量内容。
 	_fit_height.call_deferred()
@@ -106,7 +101,7 @@ func present(info: Dictionary) -> void:
 
 func _on_pressed() -> void:
 	Sfx.play("ui")
-	join_requested.emit(_code.text, _endpoint)
+	join_requested.emit(_code.text)
 
 
 # Button 不会按子控件自动调整尺寸。根据内容与内边距设置卡片最小高度。

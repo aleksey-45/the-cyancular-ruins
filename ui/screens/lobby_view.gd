@@ -1,12 +1,10 @@
 class_name LobbyView
 extends Control
 
-# 点击局域网房间卡片时，大厅视图通过信号把房间号、服务器地址和端口交给控制器。
-
 signal nickname_changed(text: String)
 signal filter_changed(mode: String)
-signal create_requested(mode: String, options: Dictionary)
-signal join_requested(code: String, endpoint: Dictionary)
+signal create_requested(mode: String, options: Dictionary, listed_nearby: bool)
+signal join_requested(code: String)
 signal copy_requested
 signal team_requested(side: int)
 signal start_requested
@@ -43,7 +41,7 @@ var _code: LineEdit
 var _browser: Control
 var _scroll: ScrollContainer
 var _list: VBoxContainer
-var _rooms: Array[Dictionary] = []
+var _rooms: Array[RoomSummary] = []
 var _cards: Array[LobbyRoomCard] = []
 var _empty: Label
 var _status: Label
@@ -61,7 +59,7 @@ func mount(nickname: String, prefs: Dictionary) -> void:
 
 
 ## 重建符合当前筛选条件的已发现房间列表。
-func present_rooms(rooms: Array[Dictionary]) -> void:
+func present_rooms(rooms: Array[RoomSummary]) -> void:
 	_rooms = rooms
 	_rebuild()
 
@@ -332,7 +330,7 @@ func _join_submitted() -> void:
 	var value := _join_code.text.strip_edges()
 	if not value.is_empty():
 		_code.text = value
-	join_requested.emit(value, {})
+	join_requested.emit(value)
 
 
 # ── 列表 / 输入 ─────────────────────────────────────────────────────────────
@@ -345,7 +343,7 @@ func _rebuild() -> void:
 		card.queue_free()
 	_cards.clear()
 	for room in _rooms:
-		if not _mode.is_empty() and str(room.get("mode", "")) != _mode:
+		if not _mode.is_empty() and room.mode != _mode:
 			continue
 		var card := LobbyRoomCard.new()
 		_list.add_child(card)
@@ -371,4 +369,4 @@ func _join_clicked() -> void:
 	if code.is_empty():
 		_join.visible = not _join.visible
 	else:
-		join_requested.emit(code, {})
+		join_requested.emit(code)

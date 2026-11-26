@@ -2,7 +2,6 @@ class_name LanDiscovery
 extends RefCounted
 
 # 监听 LanBeacon 发出的局域网房间广播，按房间号去重并移除过期条目。
-# 编解码和房间列表更新可脱离 UDP 监听单独测试。
 
 const PORT := 7788
 const INTERVAL := 1.0
@@ -32,8 +31,8 @@ static func decode_room(packet: PackedByteArray) -> Dictionary:
 		return {}
 	var data: Dictionary = parsed
 	if data.get("v") != VERSION or data.get("t") != "room": return {}
-	if not data.get("code") is String or not valid_code(data["code"]): return {}
-	if not PvpSession.MODE_NAMES.has(data.get("mode")): return {}
+	if not data.get("code") is String or not RoomSummary.valid_code(data["code"]): return {}
+	if not RoomOptions.MODE_FIELDS.has(data.get("mode")): return {}
 	if not data.get("in_match") is bool or not data.get("beta") is bool: return {}
 	var maximum := _int_field(data, "max", 0, RoomOptions.ROYALE_PLAYERS.y)
 	var players := _int_field(data, "players", 0, maximum)
@@ -41,15 +40,6 @@ static func decode_room(packet: PackedByteArray) -> Dictionary:
 	if players < 0 or port < 0: return {}
 	return {"code": data["code"], "mode": data["mode"], "players": players, "max": maximum,
 		"in_match": data["in_match"], "beta": data["beta"], "port": port}
-
-static func valid_code(code: String) -> bool:
-	if code.length() != 8:
-		return false
-	for i in code.length():
-		if code[i] < "0" or code[i] > "9":
-			return false
-	return true
-
 
 ## 读取整数字段。缺失、非整数或超出范围时返回 -1。
 static func _int_field(data: Dictionary, key: String, low: int, high: int) -> int:
@@ -65,26 +55,28 @@ static func _int_field(data: Dictionary, key: String, low: int, high: int) -> in
 	return result
 
 
-## 根据收到的广播刷新房间记录，返回房间信息是否有变化。
+## 每份公告都刷新地址和有效期，只有大厅可见的摘要变化时才返回 true。
 func update(info: Dictionary, source_ip: String, now: float) -> bool:
 	var code: String = info["code"]
-	var previous: Dictionary = _rooms.get(code, {})
-	var changed: bool = previous.is_empty() or previous["ip"] != source_ip or previous["info"] != info
-	_rooms[code] = {"info": info, "ip": source_ip, "last_seen": now}
+	var summary := info.duplicate()
+	summary.erase("port")
+	var changed: bool = not _rooms.has(code) or _rooms[code].summary != summary
+	_rooms[code] = {"summary": summary, "endpoint": {"ip": source_ip, "port": info.port}, "last_seen": now}
 	return changed
 
 
-## 清除过期条目，按房间号排序返回仍有效的房间。
-func rooms() -> Array[Dictionary]:
-	var out: Array[Dictionary] = []
-	for code in _rooms.keys():
-		var entry: Dictionary = _rooms[code]
-		var room: Dictionary = entry["info"].duplicate()
-		room["ip"] = entry["ip"]
-		out.append(room)
-	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return str(a["code"]) < str(b["code"]))
-	return out
+func rooms() -> Array[RoomSummary]:
+	var codes := _rooms.keys()
+	codes.sort()
+	var result: Array[RoomSummary] = []
+	for code: String in codes:
+		result.append(RoomSummary.new(_rooms[code].summary))
+	return result
+
+func endpoint(code: String, now: float) -> Dictionary:
+	var entry: Dictionary = _rooms.get(code, {})
+	if entry.is_empty() or now - entry.last_seen > TTL: return {}
+	return entry.endpoint
 
 
 ## 移除过期房间，返回列表是否有变化。
@@ -95,10 +87,6 @@ func expire(now: float) -> bool:
 			_rooms.erase(code)
 			removed = true
 	return removed
-
-
-func clear() -> void:
-	_rooms.clear()
 
 
 ## 绑定 0.0.0.0:PORT 接收广播。绑定失败时返回错误码。
@@ -114,6 +102,7 @@ func listen() -> Error:
 
 ## 停止监听并释放端口。可以重复调用。
 func stop() -> void:
+	_rooms.clear()
 	if _socket == null:
 		return
 	_socket.close()

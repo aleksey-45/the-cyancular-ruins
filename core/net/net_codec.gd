@@ -8,7 +8,7 @@ const EVENT := 2
 const KEEP := 64
 const MAX_UNRELIABLE_STATE := 256 * 1024
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 41
+const PROTOCOL_VERSION := 42
 const MODES := [WorldSpec.DUEL, WorldSpec.TEAM, WorldSpec.ROYALE]
 enum Field { U8, I8, U16, I32, U32, F64, VEC, BOOL, INVENTORY, U64, POLYLINE, DATA }
 const PlayerSlots := preload("res://core/sim/player_state_schema.gd")
@@ -342,6 +342,7 @@ func encode_event(kind: int, data: Variant, batch: StateBatch = null) -> PackedB
 	match kind:
 		NetEvent.Kind.CREATE:
 			s.put_u8(MODES.find(data["mode"]))
+			s.put_u8(int(data["listed_nearby"]))
 			_put_options(s, data["options"])
 		NetEvent.Kind.JOIN:
 			s.put_u32(int(data["code"]))
@@ -387,7 +388,7 @@ func _read_event(kind: int, s: Reader) -> Variant:
 		NetEvent.Kind.CREATE, NetEvent.Kind.JOIN:
 			var profile := {"name": _get_string(s), "hue": s.read(Field.F64)}
 			if kind == NetEvent.Kind.CREATE:
-				return profile.merged({"mode": _get_mode(s), "options": _get_options(s)})
+				return profile.merged({"mode": _get_mode(s), "listed_nearby": s.read(Field.BOOL), "options": _get_options(s)})
 			return profile.merged({"code": "%08d" % s.read(Field.U32), "beta": s.read(Field.BOOL)})
 		NetEvent.Kind.REJOIN: return {"code": "%08d" % s.read(Field.U32), "token": _get_token(s)}
 		NetEvent.Kind.PICK_TEAM, NetEvent.Kind.READY: return s.read(Field.U32)
@@ -410,7 +411,7 @@ func _read_event(kind: int, s: Reader) -> Variant:
 			return {"sub_hp": _get_cell_hp(s), "frame": decode_state(s, true)}
 		NetEvent.Kind.TERRAIN:
 			return {"version": s.read(Field.U32), "cells": _get_cell_hp(s)}
-		NetEvent.Kind.LEAVE, NetEvent.Kind.START, NetEvent.Kind.SUICIDE:
+		NetEvent.Kind.LEAVE, NetEvent.Kind.START, NetEvent.Kind.RETURN_TO_ROOM, NetEvent.Kind.SUICIDE:
 			return null
 	s.valid = false
 	return null

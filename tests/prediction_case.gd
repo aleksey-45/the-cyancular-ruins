@@ -363,5 +363,5 @@ func _load_match(tree: SceneTree) -> void:
 			and client.terrain.get_modified().is_empty() and client.controls.frozen,
 			"the round baseline resets terrain and input on the mounted match")
 	client.free()
-	PvpSession.room.clear()
+	NetSession.close()
 	host.world.close()

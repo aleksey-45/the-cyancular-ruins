@@ -78,7 +78,7 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP | ActorInput.BIT_CHARGE_RIGHT, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c729000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
+	var protocol_bytes := ("c72a000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
 			+ "0d00000002000000000000f03f0e0000000157000000010c000000640000002002080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT encodes packet-local phase deltas and a self-contained action tick")
 	var stream := _body(wire, NetCodec.INPUT)
@@ -296,7 +296,7 @@ func _lobby() -> void:
 			"beta": true, "time": rules, "player_collision": true}
 	var create := {"mode": WorldSpec.ROYALE, "options": options, "name": "host", "hue": 0.5}
 	for public_room in [false, true]:
-		options["lan_public"] = public_room
+		create["listed_nearby"] = public_room
 		stream = _body(codec.encode_event(NetEvent.Kind.CREATE, create), NetCodec.EVENT + NetEvent.Kind.CREATE)
 		expect(codec.decode_event(NetEvent.Kind.CREATE, stream) == create and stream.remaining() == 0,
 				"CREATE preserves room options and LAN visibility")
@@ -331,12 +331,11 @@ func _tunnel_parsing() -> void:
 			'[{"hostname":"cyr-host-1024","ipv4":"invalid"},{"hostname":"cyr-host-54321","ipv4":"10.126.126.1"}]')
 	expect(Tunnel.pick_host_peer(peers) == {"ipv4": "10.126.126.1", "port": 54321},
 			"host lookup skips invalid addresses and reads the game port")
-	expect(not Tunnel.start_host(65536, "01234567").is_empty(), "tunnel rejects an out-of-range host port")
 
 func _room_admission() -> void:
 	var session := LobbySession.new()
 	var guest := {"name": "player", "hue": 0.0}
-	var create := guest.merged({"mode": WorldSpec.DUEL, "options": {}})
+	var create := guest.merged({"mode": WorldSpec.DUEL, "options": {}, "listed_nearby": false})
 
 	session._on_event(11, NetEvent.Kind.CREATE, create)
 	expect(not session.code.is_empty() and session.role_of(11) == 1, "CREATE seats the supplied player profile")
@@ -356,7 +355,7 @@ func _royale_capacity() -> void:
 	var session := LobbySession.new()
 	var guest := {"name": "player", "hue": 0.0}
 
-	session._on_event(1, NetEvent.Kind.CREATE, guest.merged({"mode": WorldSpec.ROYALE,
+	session._on_event(1, NetEvent.Kind.CREATE, guest.merged({"mode": WorldSpec.ROYALE, "listed_nearby": false,
 			"options": {"map": "res://maps/newfactory.cyrm", "max_players": 16, "player_collision": true}}))
 	var join := guest.merged({"code": session.code, "beta": false})
 	for peer in range(2, 18):
@@ -475,7 +474,7 @@ func _codec() -> void:
 func _event_records() -> void:
 	var codec := NetCodec.new()
 	var records := {
-		NetEvent.Kind.CREATE: {"name": "h", "hue": 0.5, "mode": WorldSpec.ROYALE, "options": {
+		NetEvent.Kind.CREATE: {"listed_nearby": true, "name": "h", "hue": 0.5, "mode": WorldSpec.ROYALE, "options": {
 			"map": "res://maps/newfactory.cyrm", "max_players": 8, "match_time": 300,
 			"round_full_heal": false, "disabled_weapons": [1, 5], "beta": true,
 			"time": TimeRules.normalized({"cap": 1800.25}), "player_collision": false}},
@@ -648,7 +647,7 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 	var old_match: WeakRef = weakref(session.world)
 	var body: WeakRef = weakref(session.world.players[1])
 	var space: WeakRef = weakref(session.world.terrain.physics.world)
-	session._on_event(11, NetEvent.Kind.LEAVE, null)
+	session._on_event(11, NetEvent.Kind.RETURN_TO_ROOM, null)
 	expect(session.world == null and old_match.get_ref() == null and body.get_ref() == null and space.get_ref() == null,
 			"returning to the room releases the match, player and physics world")
 

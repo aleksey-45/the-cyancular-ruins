@@ -23,9 +23,10 @@ func _ready() -> void:
 	input_sampled.connect(NetBus.send_input)
 	_presenter.names = _baseline["names"]
 	_presenter.hues = _baseline["hues"]
-	NetBus.event_received.connect(_on_event)
-	NetBus.server_disconnected.connect(_begin_reconnect)
-	NetBus.protocol_error.connect(_go_offline)
+	NetSession.match_baseline.connect(_install_baseline)
+	NetSession.room_changed.connect(_room_changed)
+	NetSession.connection_lost.connect(_begin_reconnect)
+	NetSession.room_closed.connect(_room_closed)
 	_baseline_ready()
 	_baseline = {}
 
@@ -37,20 +38,18 @@ func _baseline_ready() -> void:
 	_refresh_input_lock()
 	NetBus.send_event(NetEvent.Kind.READY, session.latest_authority["checkpoint"]["rules"][MatchRules.State.NUMBER])
 
-func _on_event(_peer: int, kind: int, data: Variant) -> void:
-	match kind:
-		NetEvent.Kind.BASELINE:
-			session.install(data, NetBus.ping_ms)
-			_baseline_ready()
-		NetEvent.Kind.ROOM:
-			if not data["in_match"]:
-				phase = Phase.OFFLINE
-				SceneTransition.change(get_tree(), "res://scenes/mp_lobby.tscn")
-		NetEvent.Kind.REJOIN_DENIED: _go_offline(data)
-		NetEvent.Kind.ROOM_CLOSED:
-			phase = Phase.OFFLINE
-			NetSession.disconnect_client()
-			SceneTransition.change(get_tree(), "res://scenes/main_menu.tscn")
+func _install_baseline(data: Dictionary) -> void:
+	session.install(data, NetBus.ping_ms)
+	_baseline_ready()
+
+func _room_changed(room: Dictionary) -> void:
+	if not room.in_match:
+		phase = Phase.OFFLINE
+		SceneTransition.change(get_tree(), "res://scenes/mp_lobby.tscn")
+
+func _room_closed(_reason: String) -> void:
+	phase = Phase.OFFLINE
+	SceneTransition.change(get_tree(), "res://scenes/main_menu.tscn")
 
 func _physics_process(delta: float) -> void:
 	for message: Array in NetSession.take_match_inbox():
@@ -86,7 +85,7 @@ func _leave_match() -> void:
 
 func _leave_result() -> void:
 	_view.pvp_hud.set_status("等待其他玩家返回房间…")
-	NetBus.send_event(NetEvent.Kind.LEAVE)
+	NetSession.return_to_room()
 
 func _refresh_input_lock() -> void:
 	controls.frozen = phase != Phase.ONLINE or _pause_open or _round_phase() != PhaseRule.PLAYING
@@ -107,7 +106,7 @@ func _begin_reconnect() -> void:
 	phase = Phase.RECONNECTING
 	_refresh_input_lock()
 	_view.pvp_hud.set_status("正在重连…")
-	var error := await NetSession.rejoin_room(true)
+	var error := await NetSession.rejoin_room()
 	if not error.is_empty() and phase == Phase.RECONNECTING and is_inside_tree():
 		_go_offline(error)
 

@@ -1,8 +1,6 @@
 class_name RoomSession
 extends Node
 
-const GRACE_SECONDS := 60.0
-const LanBeaconScript := preload("res://core/net/lan_beacon.gd")
 var code := ""
 var mode := WorldSpec.DUEL
 var options := RoomOptions.normalized(WorldSpec.DUEL, {})
@@ -14,7 +12,7 @@ var world: MatchWorld:
 	get: return session.world if session != null else null
 var _published_terrain := 0
 var _returned: Dictionary = {}
-var _beacon: LanBeaconScript
+var _beacon: LanBeacon
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -65,7 +63,7 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			options = RoomOptions.normalized(mode, data["options"])
 			code = "%08d" % (randi() % 100000000)
 			add_seat(peer, data)
-			_start_beacon()
+			if data.listed_nearby: _beacon = LanBeacon.new(_lan_info)
 			broadcast_room()
 		NetEvent.Kind.JOIN:
 			var role := role_of(peer)
@@ -103,16 +101,15 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			var role := role_of(peer)
 			if world != null and role != 0:
 				session.enqueue(MatchWorld.Command.SUICIDE, role)
+		NetEvent.Kind.RETURN_TO_ROOM:
+			var role := role_of(peer)
+			if role != 0 and world != null and world.finished:
+				_returned[role] = true
+				if _returned.size() == online_count(): return_to_room()
 		NetEvent.Kind.LEAVE:
 			var role := role_of(peer)
-			if not seats.has(role):
-				return
-			if world != null and world.finished:
-				_returned[role] = true
-				if _returned.size() == online_count():
-					return_to_room()
-			else:
-				remove_seat(role)
+			if role != 0: remove_seat(role)
+			NetBus.send_event(NetEvent.Kind.ROOM_CLOSED, "已退出房间", peer)
 
 func message(peer: int, value: String) -> void:
 	NetBus.send_event(NetEvent.Kind.MESSAGE, value, peer)
@@ -190,21 +187,6 @@ func broadcast_room(only_role: int = 0) -> void:
 			var payload := base.merged({"your_role": role, "token": seat["token"]})
 			NetBus.send_event(NetEvent.Kind.ROOM, payload, seat["peer"])
 
-# 建房成功后按房间选项 lan_public 决定是否启动局域网广播。
-func _start_beacon() -> void:
-	_stop_beacon()
-	if not options["lan_public"]:
-		return
-	_beacon = LanBeaconScript.new()
-	_beacon.start(_lan_info)
-
-
-func _stop_beacon() -> void:
-	if _beacon != null:
-		_beacon.stop()
-		_beacon = null
-
-
 # 广播包中的 port 是游戏服务器的监听端口。等待玩家加入时也会广播。
 func _lan_info() -> Dictionary:
 	return {"code": code, "mode": mode, "players": seats.size(), "max": max_players(),
@@ -212,7 +194,7 @@ func _lan_info() -> Dictionary:
 
 
 func _exit_tree() -> void:
-	_stop_beacon()
+	_beacon = null
 	_close_match()
 
 
@@ -318,7 +300,7 @@ func _on_left(peer: int) -> void:
 	if not seats.has(role):
 		return
 	seats[role]["peer"] = 0
-	seats[role]["deadline"] = Time.get_ticks_msec() / 1000.0 + GRACE_SECONDS
+	seats[role]["deadline"] = Time.get_ticks_msec() / 1000.0 + RoomOptions.REJOIN_SECONDS
 	seats[role]["ready"] = false
 	_returned.erase(role)
 	if world == null:
@@ -354,7 +336,7 @@ func _grace() -> Dictionary:
 func remove_seat(role: int) -> void:
 	if role == host_role:
 		_broadcast(NetEvent.Kind.ROOM_CLOSED, "房主已离开", role)
-		_stop_beacon()
+		_beacon = null
 		_close_match()
 		seats.clear()
 		_returned.clear()
