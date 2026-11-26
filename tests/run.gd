@@ -1,6 +1,10 @@
 extends Node
 
-const GROUPS := {"editor": "editor_case", "lan": "lan_case", "net": "net_case", "transport": "transport_case", "terrain": "terrain_case", "simulation": "simulation_case", "monitor": "monitor_case", "prediction": "prediction_case"}
+const GROUPS := {
+	"editor": ["editor_case"], "lan": ["lan_case"], "net": ["net_case"], "transport": ["transport_case"],
+	"terrain": ["terrain_case"], "monitor": ["monitor_case"], "prediction": ["prediction_case"],
+	"simulation": ["simulation_case", "time_case", "movement_case", "match_rules_case", "presentation_case"],
+}
 
 func _ready() -> void:
 	_run.call_deferred()
@@ -18,12 +22,17 @@ func _run() -> void:
 			printerr("Unknown check group: ", group)
 			get_tree().quit(1)
 			return
-		var suite = load("res://tests/%s.gd" % GROUPS[group]).new()
-		await suite.run(get_tree())
-		suite.cleanup()
-		for failure in suite.failures: printerr("FAIL %s: %s" % [group, failure])
-		failures += suite.failures.size()
-		print("CHECK %s %s (%d)" % [group, "PASS" if suite.failures.is_empty() else "FAIL", suite.checks])
+		var issues := 0
+		var checks := 0
+		for name: String in GROUPS[group]:
+			var suite = load("res://tests/%s.gd" % name).new()
+			await suite.run(get_tree())
+			suite.cleanup()
+			for failure in suite.failures: printerr("FAIL %s: %s" % [group, failure])
+			issues += suite.failures.size()
+			checks += suite.checks
+		failures += issues
+		print("CHECK %s %s (%d)" % [group, "PASS" if issues == 0 else "FAIL", checks])
 	await get_tree().process_frame
 	for child in get_tree().root.get_children():
 		if is_instance_valid(child) and child is AudioStreamPlayer:
