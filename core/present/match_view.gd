@@ -15,6 +15,8 @@ var watch: WatchHud
 
 var _world: WorldView
 @onready var camera: MatchCamera = $WorldViewport/Camera
+@onready var _viewport: SubViewport = $WorldViewport
+@onready var _canvas: WorldCanvas = $WorldViewport/Canvas
 @onready var _hud: Hud = $Hud
 @onready var _screen: PostProcess = $PostProcess
 var _radar: Minimap
@@ -22,18 +24,19 @@ var _symbol: Label
 var _time_of_day: Label
 var _mode: MatchFrame.Mode
 var _presented_at := -1.0
+var _intro: RunIntro
+var _intro_time := -1.0
+var _intro_downed := false
+var _death_saved := false
+var _water_state := Vector2.ZERO
+var _intro_walls := PackedByteArray()
 
 func mount(world: WorldView, map: Dictionary,
 		mode: MatchFrame.Mode, clock: MatchFrame.Clock, radar: bool) -> void:
 	_mode = mode
 	_world = world
-	camera.zoom = Vector2.ONE * CFG.cam_zoom
-	var viewport: SubViewport = $WorldViewport
-	var margin := Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin
-	_mount_backgrounds(viewport, map, margin)
-	terrain_view.install(map, margin)
-	var size := Vector2(map.size * CyrmMap.CELL_SIZE)
-	_world.bind($WorldViewport/Canvas, size)
+	_mount_battlefield(map)
+	_world.bind(_canvas, Vector2(map.size * CyrmMap.CELL_SIZE))
 	pause.mount(mode != MatchFrame.Mode.SOLO)
 	if mode == MatchFrame.Mode.SOLO:
 		_time_of_day = UiFactory.label("", 40)
@@ -49,6 +52,79 @@ func mount(world: WorldView, map: Dictionary,
 		add_child(_radar)
 	if clock != null:
 		_mount_watch(clock)
+
+func _mount_battlefield(map: Dictionary) -> void:
+	camera.zoom = Vector2.ONE * CFG.cam_zoom
+	var margin := Vector2(_viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin
+	_mount_backgrounds(_viewport, map, margin)
+	terrain_view.install(map, margin)
+
+func mount_intro(intro: RunIntro) -> void:
+	_mount_battlefield(intro.map)
+	_intro_walls = intro.walls
+	_hud.hide()
+	feedback.hide()
+	feedback.set_process(false)
+	pause.set_process_unhandled_input(false)
+	_screen.set_process(false)
+	_screen.set_process_unhandled_input(false)
+	var hint := UiFactory.label("Esc / 空格 跳过", 28)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hint.add_theme_constant_override("outline_size", 6)
+	UiFactory.place(_screen, hint, Rect2(-252, -70, 224, 44), Vector2.ONE)
+
+func show_intro_frame(frame: Array, textures: Array[Texture2D]) -> void:
+	var walls: PackedByteArray = frame[RunIntro.Frame.WALLS]
+	terrain_view.show_walls(_intro_walls, walls)
+	_intro_walls = walls
+	var water: Vector2 = frame[RunIntro.Frame.WATER]
+	terrain_view.present(water.x, water.y)
+	camera.position = frame[RunIntro.Frame.CAMERA]
+	camera.force_update_scroll()
+	_canvas.show_display(frame[RunIntro.Frame.DRAW], textures)
+	_screen.show_display(frame[RunIntro.Frame.POST])
+
+func present_intro_effect(elapsed: float, duration: float) -> void:
+	var fade := smoothstep(0.0, 0.1, elapsed) * smoothstep(0.0, 0.12, duration - elapsed)
+	_screen.set_intro_rewind(elapsed, fade * lerpf(0.35, 1.0, elapsed / duration))
+
+func set_battle_visible(shown: bool) -> void:
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if shown else SubViewport.UPDATE_DISABLED
+	_hud.visible = shown
+	feedback.visible = shown
+	_screen.visible = shown
+	_screen.set_process(shown)
+	_screen.set_process_unhandled_input(shown)
+	pause.set_process_unhandled_input(shown)
+
+func begin_intro_capture(map: Dictionary) -> void:
+	_intro = RunIntro.new(map)
+	_intro_time = -1.0
+	_intro_downed = false
+	_death_saved = false
+	RenderingServer.frame_pre_draw.connect(capture_intro_frame)
+
+func capture_intro_frame(force := false) -> void:
+	if _intro == null or _intro_time < 0.0 or _death_saved:
+		return
+	if not force and get_tree().paused:
+		return
+	_intro.append([_intro_time, _intro.walls, camera.position, _water_state, _screen.display_state(),
+		_canvas.display_state(_intro.texture_index)])
+	if _intro_downed:
+		_death_saved = true
+		_intro.save()
+
+func end_intro_capture(save := false) -> void:
+	if _intro == null:
+		return
+	if save and not _death_saved:
+		if not get_tree().paused:
+			capture_intro_frame(true)
+		if not _death_saved and not _intro.frames.is_empty():
+			_intro.save()
+	RenderingServer.frame_pre_draw.disconnect(capture_intro_frame)
+	_intro = null
 
 func _mount_backgrounds(viewport: SubViewport, map: Dictionary, margin: Vector2) -> void:
 	for depth in BACKGROUND_SCROLL.size():
@@ -98,6 +174,16 @@ func present(delta: float, frame: MatchFrame) -> void:
 	_world.present(frame, grain_target)
 	if _radar != null:
 		_radar.present(frame)
+	if _intro != null:
+		_intro.patch_walls(frame.wall_changes)
+		_water_state = Vector2(frame.now, coverage)
+		if _intro_time < 0.0:
+			_intro_time = 0.0
+		elif not _intro_downed or not frame.downed:
+			_intro_time += delta
+		_intro_downed = frame.downed
+		if not _intro_downed:
+			_death_saved = false
 
 func _apply_cues(frame: MatchFrame) -> void:
 	camera.hit(frame.hit_ratio)
@@ -163,5 +249,6 @@ func _present_clock(clock: MatchFrame.Clock, now: float, delta: float) -> float:
 	return 0.0
 
 func _exit_tree() -> void:
-	if _mode == MatchFrame.Mode.SOLO:
+	end_intro_capture()
+	if _world != null and _mode == MatchFrame.Mode.SOLO:
 		Sfx.pitch_mult = 1.0

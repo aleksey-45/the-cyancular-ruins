@@ -13,6 +13,10 @@ var base_position := Vector2.ZERO
 var _bound := false
 var _rng := RandomNumberGenerator.new()
 
+func reset_follow() -> void:
+	_bound = false
+	_shake_time = 0.0
+
 func fire(weapon: int) -> void:
 	var spec := WeaponRegistry.definition(weapon)
 	if spec.has("shake"):

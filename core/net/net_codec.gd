@@ -7,7 +7,7 @@ const STATE := 1
 const EVENT := 2
 const KEEP := 64
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 38
+const PROTOCOL_VERSION := 39
 const MODES := [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 const Field := NetEvent.Field
 const PlayerSlots := preload("res://core/sim/player_state_schema.gd")
@@ -26,8 +26,8 @@ const PROJECTILE_FIELDS := MOTION_FIELDS + [Field.U8, Field.U16, Field.I32, Fiel
 const HISTORY_FIELDS := [Field.F64, Field.F64, Field.F64]
 const RULE_FIELDS := [Field.U8, Field.U32, Field.F64, Field.F64, Field.DATA, Field.DATA,
 	Field.DATA, Field.U16, Field.U16, Field.DATA]
-const META_KEYS := ["combat_tick", "pickup_tick", "pickup_next", "enemy_next", "kills", "rng", "death_end"]
-const META_FIELDS := [Field.U32, Field.U32, Field.U32, Field.I32, Field.U32, Field.U64, Field.F64]
+const META_KEYS := ["combat_tick", "pickup_tick", "pickup_next", "enemy_next", "kills", "rng"]
+const META_FIELDS := [Field.U32, Field.U32, Field.U32, Field.I32, Field.U32, Field.U64]
 const RECORDS := {
 	"projectiles": [Field.U64, PROJECTILE_FIELDS],
 	"pickups": [Field.U32, [Field.VEC, Field.VEC, Field.U8, Field.U16, Field.U32, Field.I32, Field.BOOL, Field.BOOL]],

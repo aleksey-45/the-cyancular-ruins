@@ -2,6 +2,7 @@ class_name PostProcess
 extends CanvasLayer
 
 const LAYER := 128  # 图层顺序使 HUD 保持在后期处理效果上方。
+const DISPLAY_PARAMS := [&"barrel_enabled", &"desat", &"hit_red", &"low_hp", &"rewind_film", &"loan_depth", &"haste_dim"]
 
 @export var world_viewport: SubViewport = null
 @export var barrel_strength: float = 0.4
@@ -66,6 +67,19 @@ func set_health_ratio(hp: int, max_hp: int) -> void:
 
 func flash_hit(strength: float = 1.0) -> void:
 	_hit_red = maxf(_hit_red, clampf(strength, 0.0, 1.0))
+
+func display_state() -> Array:
+	var values := []
+	for key: StringName in DISPLAY_PARAMS:
+		values.append(_mat.get_shader_parameter(key))
+	return values
+
+func show_display(values: Array) -> void:
+	for i in DISPLAY_PARAMS.size():
+		_mat.set_shader_parameter(DISPLAY_PARAMS[i], values[i])
+
+func set_intro_rewind(elapsed: float, strength: float) -> void:
+	_mat.set_shader_parameter(&"intro_rewind", Vector2(elapsed, strength))
 
 ## 更新时间技能滤镜并返回回溯效果的过渡进度。单人模式将回溯效果应用到世界画面，多人模式用返回值绘制地形图层。
 func advance_time(delta: float, rewinding: bool, haste: bool, loan: float, fullscreen: bool) -> float:

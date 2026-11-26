@@ -8,11 +8,14 @@ const EYE_LIGHT := preload("res://assets/textures/player_light_cookie.png")
 const MAX_POINT_LIGHTS_PER_ITEM := 15  # Godot Mobile 的单 CanvasItem 点光上限。
 enum Pass { NORMAL, PLAYER_BODY, GLOW, MASK, FOREGROUND }
 enum Mark { BOX, CIRCLE, ARC, POLYGON, LINE }
+enum Display { DAYLIGHT, EYES, BATCHES, FOREGROUND, LINES, MARKS, OVERLAY, LABELS }
 
 class SpriteBatch extends Node2D:
+	var style: int
 	var rows: Array[Array] = []
 
 var _sky := Daylight.new()
+var _day_minute: float
 var _ambient := CanvasModulate.new()
 var _directional := DirectionalLight2D.new()
 var _eye_lights: Array[PointLight2D] = []
@@ -54,6 +57,7 @@ func _ready() -> void:
 	_overlay.draw.connect(_draw_overlay)
 
 func set_daylight(minute: float) -> void:
+	_day_minute = minute
 	_ambient.color = _sky.set_minute(minute)
 	var source := _sky.directional_light
 	var color := _sky.directional_color
@@ -68,8 +72,8 @@ static func _shader_material(shader: Shader) -> ShaderMaterial:
 	return result
 
 ## 只合批相邻的同材质贴图，保留角色、武器与特效的遮挡顺序。
-func _batch(style: Material, separate: bool) -> SpriteBatch:
-	if not separate and _batch_count > 0 and _batches[_batch_count - 1].material == style:
+func _batch(style: int, separate: bool) -> SpriteBatch:
+	if not separate and _batch_count > 0 and _batches[_batch_count - 1].style == style:
 		return _batches[_batch_count - 1]
 	if _batch_count == _batches.size():
 		var node := SpriteBatch.new()
@@ -77,7 +81,8 @@ func _batch(style: Material, separate: bool) -> SpriteBatch:
 		node.draw.connect(_draw_sprites.bind(node, node.rows))
 		_batches.append(node)
 	var batch := _batches[_batch_count]
-	batch.material = style
+	batch.style = style
+	batch.material = _materials[style]
 	_batch_count += 1
 	return batch
 
@@ -105,10 +110,9 @@ func submit() -> void:
 
 func sprite(texture: Texture2D, region: Rect2, pose: Transform2D, color := Color.WHITE,
 		sprite_pass := Pass.NORMAL) -> void:
-	var rect := Rect2(-region.size * 0.5, region.size)
 	var separate := _split_player_batches and sprite_pass == Pass.PLAYER_BODY
-	var batch := _foreground if sprite_pass == Pass.FOREGROUND else _batch(_materials[sprite_pass], separate)
-	batch.rows.append([texture, region, pose, color, rect])
+	var batch := _foreground if sprite_pass == Pass.FOREGROUND else _batch(sprite_pass, separate)
+	batch.rows.append([texture, region, pose, color])
 
 func eye_light(pose: Transform2D) -> void:
 	if _eye_light_count == _eye_lights.size():
@@ -150,6 +154,50 @@ func text_at(value: String, at: Vector2, color: Color, plate := false, outline :
 static func centered_baseline() -> float:
 	return (FONT.get_ascent(32) - FONT.get_descent(32)) * 0.5
 
+func display_state(texture_index: Callable) -> Array:
+	var eyes: Array[Transform2D] = []
+	for i in _eye_light_count:
+		eyes.append(_eye_lights[i].transform)
+	var batches: Array[Array] = []
+	for i in _batch_count:
+		var batch := _batches[i]
+		batches.append([batch.style, _index_sprites(batch.rows, texture_index)])
+	return [_day_minute, eyes, batches, _index_sprites(_foreground.rows, texture_index),
+		_copy_geometry(_lines, 0), _copy_geometry(_marks, 1), _copy_geometry(_overlay_marks, 1),
+		_labels.duplicate(true)]
+
+func show_display(state: Array, textures: Array[Texture2D]) -> void:
+	set_daylight(state[Display.DAYLIGHT])
+	begin(0)
+	for pose: Transform2D in state[Display.EYES]:
+		eye_light(pose)
+	for batch: Array in state[Display.BATCHES]:
+		_restore_sprites(_batch(batch[0], true).rows, batch[1], textures)
+	_restore_sprites(_foreground.rows, state[Display.FOREGROUND], textures)
+	_lines.assign(state[Display.LINES])
+	_marks.assign(state[Display.MARKS])
+	_overlay_marks.assign(state[Display.OVERLAY])
+	for i in _labels.size():
+		_labels[i].assign(state[Display.LABELS][i])
+	submit()
+
+static func _index_sprites(rows: Array[Array], texture_index: Callable) -> Array[Array]:
+	var captured: Array[Array] = []
+	for row in rows:
+		captured.append([texture_index.call(row[0]), row[1], row[2], row[3]])
+	return captured
+
+static func _restore_sprites(rows: Array[Array], saved: Array, textures: Array[Texture2D]) -> void:
+	for row: Array in saved:
+		rows.append([textures[row[0]], row[1], row[2], row[3]])
+
+static func _copy_geometry(rows: Array[Array], point_column: int) -> Array[Array]:
+	var captured := rows.duplicate(true)
+	for row in captured:
+		if row[point_column] is PackedVector2Array:
+			row[point_column] = row[point_column].duplicate()
+	return captured
+
 func _draw() -> void:
 	for row in _lines:
 		draw_polyline(row[0], row[1], row[2], true)
@@ -165,8 +213,9 @@ func _draw_foreground() -> void:
 
 func _draw_sprites(target: CanvasItem, rows: Array) -> void:
 	for row: Array in rows:
+		var region: Rect2 = row[1]
 		target.draw_set_transform_matrix(row[2])
-		target.draw_texture_rect_region(row[0], row[4], row[1], row[3], false, false)
+		target.draw_texture_rect_region(row[0], Rect2(-region.size * 0.5, region.size), region, row[3], false, false)
 	target.draw_set_transform_matrix(Transform2D.IDENTITY)
 
 func _draw_marks(target: CanvasItem, rows: Array) -> void:

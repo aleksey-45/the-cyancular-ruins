@@ -49,6 +49,18 @@ func patch(changes: Dictionary) -> void:
 	for index: int in changes:
 		_paint_wall(index, changes[index])
 
+func show_walls(previous: PackedByteArray, current: PackedByteArray) -> void:
+	if previous == current:
+		return
+	for i in current.size():
+		var changed := previous[i] ^ current[i]
+		if changed == 0:
+			continue
+		for bit in 8:
+			var flag := 1 << bit
+			if changed & flag:
+				_paint_wall(i * 8 + bit, not (current[i] & flag))
+
 func present(elapsed: float, coverage: float) -> void:
 	_wall.material = _wall_film if coverage > 0.0 else null
 	_wall_film.set_shader_parameter("coverage", coverage)

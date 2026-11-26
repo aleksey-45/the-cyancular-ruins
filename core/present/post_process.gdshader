@@ -18,6 +18,7 @@ uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 将透支量换算�
 uniform float haste_dim : hint_range(0.0, 1.0) = 0.0;     // 加速时使暗色滤镜逐渐覆盖画面。
 uniform vec2 viewport_size = vec2(1920.0, 1440.0);        // 世界视口的宽度用于把像素偏移换算成 UV 偏移。
 uniform float loan_aberration = 5.0;                      // 透支达到上限时，红色和蓝色通道各自偏移的像素数。
+uniform vec2 intro_rewind = vec2(0.0);                    // 片头的播放时间与倒带强度。
 
 void fragment() {
 	vec2 uv = SCREEN_UV;
@@ -32,7 +33,19 @@ void fragment() {
 	// 镜头畸变会用到窗口外的颜色，因此从较大的世界视口纹理取样。
 	uv = (uv - 0.5) * crop_scale + 0.5;
 
-	COLOR = texture(screen_tex, uv);
+	float strength = intro_rewind.y;
+	float line = 0.0;
+	float band = 0.0;
+	if (strength > 0.0) {
+		line = floor(SCREEN_UV.y * 480.0);
+		float center = fract(0.28 + intro_rewind.x * 0.56);
+		band = 1.0 - smoothstep(0.0, 0.13, abs(SCREEN_UV.y - center));
+		float wobble = sin(line * 3.59 + intro_rewind.x * 110.0) * (1.6 + 26.0 * band);
+		uv.x += wobble * strength / viewport_size.x;
+	}
+
+	vec4 source = texture(screen_tex, uv);
+	COLOR = source;
 	if (hit_red > 0.0) {
 		COLOR.rgb = mix(COLOR.rgb, vec3(0.85, 0.05, 0.05), hit_red * 0.6);
 	}
@@ -61,10 +74,19 @@ void fragment() {
 	// 模拟透支效果时，沿水平方向错开红色与蓝色通道，再增加整体亮度。
 	if (loan_depth > 0.0) {
 		float off = loan_depth * loan_aberration / max(viewport_size.x, 1.0);
-		vec3 base = texture(screen_tex, uv).rgb;
 		float cr = texture(screen_tex, uv + vec2(off, 0.0)).r;
 		float cb = texture(screen_tex, uv - vec2(off, 0.0)).b;
-		COLOR.rgb = mix(COLOR.rgb, vec3(cr, base.g, cb), 0.9);
+		COLOR.rgb = mix(COLOR.rgb, vec3(cr, source.g, cb), 0.9);
 		COLOR.rgb += vec3(0.10, 0.095, 0.12) * loan_depth;
+	}
+	if (strength > 0.0) {
+		vec2 offset = vec2((2.0 + 8.0 * strength) / viewport_size.x, 0.0);
+		float cr = texture(screen_tex, uv + offset).r;
+		float cb = texture(screen_tex, uv - offset).b;
+		COLOR.rgb += vec3(cr - source.r, 0.0, cb - source.b) * 0.65 * strength;
+		COLOR.rgb = mix(COLOR.rgb, film_negative(COLOR.rgb), 0.78 * strength);
+		float scan = 1.0 - step(1.0, mod(line, 3.0));
+		COLOR.rgb *= 1.0 - 0.30 * scan * strength;
+		COLOR.rgb += vec3(0.025, 0.045, 0.065) * band * strength;
 	}
 }

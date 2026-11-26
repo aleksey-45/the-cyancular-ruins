@@ -128,4 +128,4 @@ func _play(path: String, disabled: Array[int]) -> void:
 	var spawn_cell := spawn
 	var weapons := enabled
 	SceneTransition.change_with_builder(get_tree(), func() -> Node:
-		return SoloLevel.create(document, spawn_cell, weapons), "正在进入单人…")
+		return SoloLevel.create(document, spawn_cell, weapons, true), "正在进入单人…")

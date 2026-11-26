@@ -1,15 +1,13 @@
 class_name MatchWorld
 extends RefCounted
 
-enum Command { START, SUICIDE, LEAVE, RESTART, DEATH_REWIND, SKIP_REWIND }
+enum Command { START, SUICIDE, LEAVE, RESTART }
 enum EnemyView { POS, VEL, SLOT, FRAMES, SCALE, ACTIVITY, FACING, GROUNDED, HP, DOWNED,
 	HIT_LEFT, ACTIVE, ELITE, BLACK_BIRD, LUNGE, BOUNDS }
 
 const Actor := preload("res://core/sim/player_state_schema.gd")
 const Phase := MatchRules.Phase
 const ATTRIB_WINDOW_TICKS := 180
-const DEATH_REWIND_SECONDS := 4.0
-const MIN_DEATH_REWIND_SECONDS := 0.5
 
 var spec: WorldSpec
 var problem: String
@@ -21,7 +19,6 @@ var rules: MatchRules
 var personal_time: PersonalTime
 var world_time: WorldTime
 var tick := 0
-var death_rewind_end := -1.0
 var _stats: Dictionary = {}
 var _floors: Array[Vector2i]
 
@@ -105,7 +102,7 @@ func capture() -> Dictionary:
 		"rules": rules.capture() if rules != null else [], "stats": _stats.duplicate(true),
 		"accounts": personal_time.state_payload() if personal_time != null else {},
 		"histories": personal_time.capture_histories() if personal_time != null else {},
-		"world_time": world_time.capture() if world_time != null else [], "death_end": death_rewind_end,
+		"world_time": world_time.capture() if world_time != null else [],
 	}
 	PerformanceStats.end(PerformanceStats.WORLD_CAPTURE, started)
 	return state
@@ -114,7 +111,6 @@ func restore(state: Dictionary) -> void:
 	terrain.apply_at(state["terrain"], {})
 	tick = state["tick"]
 	combat.tick = state["combat_tick"]
-	death_rewind_end = state["death_end"]
 	_stats = state["stats"].duplicate(true)
 	if rules != null:
 		rules.restore(state["rules"])
@@ -188,29 +184,16 @@ func sample(only_role := 0) -> Dictionary:
 		"account": account.capture_state() if account != null else []}
 
 func _step_solo_time(inputs: Dictionary, commands: Array) -> bool:
-	var player := players[1]
 	for command: Array in commands:
-		match command[0]:
-			Command.RESTART, Command.SKIP_REWIND:
-				_restart_solo()
-				return true
-			Command.DEATH_REWIND:
-				var oldest := world_time.history.oldest_time()
-				var now := world_time.history.time
-				death_rewind_end = maxf(oldest, now - DEATH_REWIND_SECONDS) if now - oldest >= MIN_DEATH_REWIND_SECONDS else now
-	if death_rewind_end >= 0.0:
-		if world_time.history.time <= death_rewind_end:
+		if command[0] == Command.RESTART:
 			_restart_solo()
-		else:
-			world_time.rewind(combat, player)
-		return true
+			return true
 	var started := PerformanceStats.begin()
-	world_time.advance(combat, player, inputs[1][ActorInput.HELD], tick)
+	world_time.advance(combat, players[1], inputs[1][ActorInput.HELD], tick)
 	PerformanceStats.end(PerformanceStats.HISTORY_SAVE, started)
 	return false
 
 func _restart_solo() -> void:
-	death_rewind_end = -1.0
 	world_time.mode = WorldTime.Mode.NONE
 	world_time.history = TimeHistory.new(TimeParams.SNAP_SECONDS)
 	combat.clear()
