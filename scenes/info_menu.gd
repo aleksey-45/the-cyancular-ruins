@@ -14,15 +14,14 @@ const CREDITS := [
 	["Jorge Luis Borges", ""],
 ]
 
-var _version: Label = null
-var _commit_list: VBoxContainer = null
-var _team_box: VBoxContainer = null
-var _credits_box: VBoxContainer = null
-var _back: Button = null
+@onready var _version: Label = %VersionLabel
+@onready var _commit_list: VBoxContainer = %CommitList
+@onready var _team_box: VBoxContainer = %TeamBox
+@onready var _credits_box: VBoxContainer = %CreditsBox
+@onready var _back: Button = %BackBtn
 
 
 func _ready() -> void:
-	_build_ui()
 	_version.text = "当前版本　%s v%s" % [ProjectSettings.get_setting("application/config/release_prefix"),
 			ProjectSettings.get_setting("application/config/version")]
 	_fill_commits()
@@ -34,93 +33,6 @@ func _ready() -> void:
 				str(pair[0]) if right == "" else "%s　%s" % [str(pair[0]), right],
 				UiDesign.T_H2, UiDesign.C_TEXT if right != "" else UiDesign.C_TEXT_DIM))
 	_back.pressed.connect(_go_back)
-	_claim_owner(self)
-
-
-# 为运行时创建的节点设置 owner，让场景唯一名称可通过 %Name 查找。
-func _claim_owner(n: Node) -> void:
-	for c in n.get_children():
-		c.owner = self
-		_claim_owner(c)
-
-
-func _build_ui() -> void:
-	var bg := ColorRect.new()
-	bg.name = "Bg"
-	bg.color = UiDesign.C_BG
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(bg)
-
-	var page := UiKit.page(self)
-	var title := UiDesign.label("信息", UiDesign.T_H1, UiDesign.C_GOLD)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	page.add_child(title)
-
-	var columns := HBoxContainer.new()
-	columns.name = "Columns"
-	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	columns.add_theme_constant_override("separation", UiDesign.SP_5)
-	page.add_child(columns)
-
-	var left := VBoxContainer.new()
-	left.name = "Left"
-	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.size_flags_stretch_ratio = 1.25
-	left.add_theme_constant_override("separation", UiDesign.SP_4)
-	columns.add_child(left)
-	var right := VBoxContainer.new()
-	right.name = "Right"
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	right.add_theme_constant_override("separation", UiDesign.SP_4)
-	columns.add_child(right)
-
-	# 版本卡片填充左栏的可用高度，提交记录在卡片内滚动。
-	var version_card := UiKit.card(left, "版本信息")
-	_card_frame(version_card).size_flags_vertical = Control.SIZE_EXPAND_FILL
-	version_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_version = UiDesign.label("", UiDesign.T_H2, UiDesign.C_WHITE)
-	_version.name = "VersionLabel"
-	_version.unique_name_in_owner = true
-	version_card.add_child(_version)
-	var scroll := ScrollContainer.new()
-	scroll.name = "CommitScroll"
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	version_card.add_child(scroll)
-	_commit_list = VBoxContainer.new()
-	_commit_list.name = "CommitList"
-	_commit_list.unique_name_in_owner = true
-	_commit_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_commit_list.add_theme_constant_override("separation", UiDesign.SP_2)
-	scroll.add_child(_commit_list)
-
-	var team_card := UiKit.card(right, "开发团队 / 特别感谢")
-	_team_box = VBoxContainer.new()
-	_team_box.name = "TeamBox"
-	_team_box.unique_name_in_owner = true
-	_team_box.add_theme_constant_override("separation", UiDesign.SP_4)
-	team_card.add_child(_team_box)
-	var credits_card := UiKit.card(right, "致谢")
-	_credits_box = VBoxContainer.new()
-	_credits_box.name = "CreditsBox"
-	_credits_box.unique_name_in_owner = true
-	_credits_box.add_theme_constant_override("separation", UiDesign.SP_4)
-	credits_card.add_child(_credits_box)
-
-	var footer := HBoxContainer.new()
-	footer.name = "Footer"
-	footer.alignment = BoxContainer.ALIGNMENT_CENTER
-	page.add_child(footer)
-	_back = UiDesign.ui_button("返回", UiDesign.T_H2, Vector2.ZERO, "quiet")
-	_back.name = "BackBtn"
-	_back.unique_name_in_owner = true
-	footer.add_child(_back)
-
-
-func _card_frame(body: VBoxContainer) -> PanelContainer:
-	return body.get_parent().get_parent().get_parent() as PanelContainer
 
 
 func _fill_commits() -> void:

@@ -1,10 +1,6 @@
 [gd_scene load_steps=4 format=3]
 
-; 主菜单静态骨架:**从 main 的 scenes/main_menu.tscn(生成器骨架)迁移**。
-; 版式 = 全屏根 Control → 实时光影背景 / 标题 / 居中菜单列 / 底部版本号 / CanvasLayer(UIRoot,承载单人开局面板)。
-; 颜色/字号/间距一律由 scenes/main_menu.gd 在 _ready 里用 UiDesign token 补齐;本文件只保留容器结构,
-; 不写 StyleBox、不写 Color 字面量、不用绝对 position/size。
-; ★ siri 导航必须保留:单人模式(SpLaunchPanel)/多人 LAN 大厅/Beta/地图编辑器/设置/信息/退出。
+; 单人开局面板由 main_menu.gd 在运行时添加到 UILayer。
 [ext_resource type="Theme" path="res://ui/theme/menu_theme_v2.tres" id="1_theme"]
 [ext_resource type="Script" path="res://scenes/main_menu.gd" id="2_menu"]
 [ext_resource type="Script" path="res://ui/menu_backdrop.gd" id="3_backdrop"]
