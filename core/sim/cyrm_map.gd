@@ -107,19 +107,7 @@ static func save_file(map: Dictionary, path: String) -> Error:
 	if path.is_empty() or path.begins_with("res://"): return ERR_INVALID_PARAMETER
 	var bytes := to_bytes(map)
 	if bytes.is_empty(): return ERR_INVALID_DATA
-	var target := ProjectSettings.globalize_path(path)
-	var temporary := "%s.%d.%d.tmp" % [target, OS.get_process_id(), Time.get_ticks_usec()]
-	var file := FileAccess.open(temporary, FileAccess.WRITE)
-	if file == null:
-		return FileAccess.get_open_error()
-	var stored := file.store_buffer(bytes)
-	file.flush()
-	var error := file.get_error() if stored else ERR_FILE_CANT_WRITE
-	file.close()
-	if error == OK: error = DirAccess.rename_absolute(temporary, target)
-	if error != OK:
-		DirAccess.remove_absolute(temporary)
-	return error
+	return AtomicFile.save(path, func(file: FileAccess) -> bool: return file.store_buffer(bytes))
 
 static func load_file(path: String) -> Dictionary:
 	return from_bytes(read_bytes(path))

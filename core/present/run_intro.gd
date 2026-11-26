@@ -4,7 +4,7 @@ extends RefCounted
 enum Frame { TIME, WALLS, CAMERA, WATER, POST, DRAW }
 
 const PATH := "user://last_run_intro.dat"
-const FORMAT := 1
+const FORMAT := 2
 const MAX_FRAMES := 300
 const HOLD := 0.1
 const BODY_SECONDS := 2.8
@@ -99,16 +99,9 @@ func save() -> void:
 		var saved := frame.duplicate()
 		saved[Frame.WALLS] = mask_ids[mask]
 		saved_frames.append(saved)
-	var temporary := "%s.%d.tmp" % [PATH, OS.get_process_id()]
-	var file := FileAccess.open(temporary, FileAccess.WRITE)
-	if file == null:
-		push_warning("无法写入单人片头存档")
-		return
-	var written := file.store_32(FORMAT) and file.store_var([_map_bytes, texture_paths, masks, saved_frames])
-	file.close()
-	if not written or DirAccess.rename_absolute(temporary, PATH) != OK:
-		DirAccess.remove_absolute(temporary)
-		push_warning("无法写入单人片头存档")
+	var error := AtomicFile.save(PATH, func(file: FileAccess) -> bool:
+		return file.store_32(FORMAT) and file.store_var([_map_bytes, texture_paths, masks, saved_frames]))
+	if error != OK: push_warning("无法写入单人片头存档")
 
 static func load_pending() -> RunIntro:
 	var file := FileAccess.open(PATH, FileAccess.READ)
