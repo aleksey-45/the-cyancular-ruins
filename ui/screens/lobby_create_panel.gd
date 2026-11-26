@@ -29,9 +29,9 @@ const SUBMIT_MIN := Vector2(UiDesign.SP_10 * 5, UiDesign.SP_10 + UiDesign.SP_2)
 var _prefs: Dictionary
 var _mode := WorldSpec.DUEL
 var _mode_buttons: Dictionary = {}
-var _collision := UiDesign.ui_check()
-var _listed_nearby := UiDesign.ui_check()
-var _full_heal := UiDesign.ui_check()
+var _collision := CheckButton.new()
+var _listed_nearby := CheckButton.new()
+var _full_heal := CheckButton.new()
 var _limits: HBoxContainer
 var _duration: HBoxContainer
 var _heal_row: HBoxContainer
@@ -136,7 +136,6 @@ func _build_options() -> VBoxContainer:
 		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		scroll.custom_minimum_size = Vector2(0, TIME_SCROLL_H)
-		scroll.get_v_scroll_bar().theme_type_variation = &"Kit"
 		options.add_child(scroll)
 		var beta := VBoxContainer.new()
 		beta.name = "TimeRules"
@@ -258,6 +257,7 @@ func open(mode: String) -> void:
 	_listed_nearby.set_pressed_no_signal(true)
 	_choose_mode(mode)
 	show()
+	_mode_buttons[mode].grab_focus()
 
 
 func _choose_mode(mode: String) -> void:

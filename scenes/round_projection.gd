@@ -56,25 +56,15 @@ static func _finish(round: PvpHud.Round, data: Dictionary, names: Dictionary, te
 		side: int, mode: String, series: String) -> void:
 	var winner: int = data["match_winner"]
 	var won := winner == side
-	var title := "平局" if winner == 0 else ("胜利!" if won else "失败")
 	var stats: Dictionary = data["stats"]
 	var mvp: int = data["mvp"]
-	var subtitle: String
 	if mode == WorldSpec.ROYALE:
 		round.timer = "对局结束"
-		subtitle = "杀敌数不相上下" if winner == 0 else ("你是大乱斗之王" if won else "%s 赢得了大乱斗" % names[winner])
-		round.banner.assign(["胜利！" if won and winner != 0 else title, subtitle])
 		round.title = "游戏结束"
+		round.subtitle = "平局" if winner == 0 else ("你赢得了大乱斗" if won else "%s 赢得了大乱斗" % names[winner])
 		round.sections.append(_section("击杀排行榜", UiDesign.C_TEXT, mode, stats.keys(), stats, names, 0))
 		return
-	if won:
-		subtitle = "你们赢下了整场对战" if mode == WorldSpec.TEAM else "你赢得了整场对战"
-	elif winner != 0:
-		subtitle = "再接再厉…"
-	else:
-		subtitle = "双方都离开了对局…" if mode == WorldSpec.TEAM else "对局结束"
-	round.banner.assign([title, subtitle])
-	round.title = title
+	round.title = "平局" if winner == 0 else ("胜利！" if won else "失败")
 	round.subtitle = series
 	if mode == WorldSpec.TEAM:
 		for team in [1, 2]:

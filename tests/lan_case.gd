@@ -88,6 +88,28 @@ func run(tree: SceneTree) -> void:
 			"cards expose independent summaries and the directory keeps the route")
 	expect(discovery.endpoint(room.code, now + 4).is_empty(), "expired addresses are never selected")
 	await _room_paths(tree, room)
+	_join_controls(tree, room.code)
+
+func _join_controls(tree: SceneTree, code: String) -> void:
+	var lobby := LobbyView.new()
+	tree.root.add_child(lobby)
+	lobby.mount("host", preload("res://scenes/mp_lobby.gd")._form_values())
+	var attempts: Array[String] = []
+	lobby.join_requested.connect(func(value: String) -> void: attempts.append(value))
+	lobby._join_button.pressed.emit()
+	expect(lobby._code.has_focus() and lobby._code.is_editing() and attempts.is_empty(),
+			"joining without a code focuses the toolbar field")
+	lobby._code.text = code
+	lobby._code.text_submitted.emit(code)
+	lobby._join_button.pressed.emit()
+	expect(attempts == [code, code], "Enter and Join each submit the same room code once")
+	lobby._create_button.pressed.emit()
+	expect(lobby._create.is_ancestor_of(tree.root.gui_get_focus_owner())
+			and lobby._join_button.get_focus_mode_with_override() == Control.FOCUS_NONE,
+			"opening the create form keeps keyboard focus inside it")
+	lobby.close_create()
+	expect(lobby._create_button.has_focus(), "closing the form returns focus to Create")
+	lobby.free()
 
 func _room_paths(tree: SceneTree, info: Dictionary) -> void:
 	var session := RequestRecorder.new()

@@ -246,7 +246,7 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	if drawing:
 		_draw_bow(weapon, aim, pose.bow_draw, now, color.a)
 	if reload >= 0.0 and not pose.remote:
-		_reload(pose.anchor, pose.facing, reload, pose.reload_left)
+		_reload(pose.anchor, reload, pose.reload_left)
 
 func _draw_bow(weapon: Dictionary, aim: Transform2D, charge: float, now: float, alpha: float) -> void:
 	var center := aim * ShotRules.launch_offset(weapon, charge)
@@ -439,12 +439,12 @@ func _guide(points: PackedVector2Array, color: Color, explosive: bool, overlay: 
 		_canvas.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16), true)
 		_canvas.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48), true)
 
-func _reload(at: Vector2, facing: int, progress: float, remaining: float) -> void:
+func _reload(at: Vector2, progress: float, remaining: float) -> void:
 	if not is_instance_valid(_reload_node):
 		_reload_node = ReloadRing.new()
 		_reload_node.name = "ReloadRing"
 		_canvas.overlay_layer.add_child(_reload_node)
-	_reload_node.position = at + Vector2(-58.0 * facing, -44.0)
+	_reload_node.position = at + Vector2(0, 96)
 	_reload_node.set_progress(progress, remaining)
 	_reload_node.show()
 

@@ -18,7 +18,7 @@ func _enter_tree() -> void:
 func _ready() -> void:
 	_mount_session(Settings.pvp_show_minimap)
 	_view.pause.toggled.connect(_set_pause)
-	_view.pvp_hud.leave_requested.connect(_leave_result)
+	_view.pvp_hud.return_requested.connect(NetSession.return_to_room)
 	NetBus.ping_updated.connect(_view.pvp_hud.set_ping)
 	input_sampled.connect(NetBus.send_input)
 	_presenter.names = _baseline["names"]
@@ -82,10 +82,6 @@ func _round_phase() -> int:
 func _leave_match() -> void:
 	NetSession.disconnect_client()
 	super()
-
-func _leave_result() -> void:
-	_view.pvp_hud.set_status("等待其他玩家返回房间…")
-	NetSession.return_to_room()
 
 func _refresh_input_lock() -> void:
 	controls.frozen = phase != Phase.ONLINE or _pause_open or _round_phase() != PhaseRule.PLAYING

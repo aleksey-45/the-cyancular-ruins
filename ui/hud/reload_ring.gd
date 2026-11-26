@@ -1,7 +1,7 @@
 class_name ReloadRing
 extends Node2D
 
-# 在角色后侧绘制换弹进度和剩余时间。
+# 在角色脚下绘制换弹进度和剩余时间。
 
 const RADIUS := 24.0
 const WIDTH := 9.0
@@ -30,6 +30,7 @@ func set_progress(progress: float, remain: float) -> void:
 
 
 func _draw() -> void:
+	draw_circle(Vector2.ZERO, RADIUS + WIDTH * 0.5, Color(UiDesign.C_SURFACE, 0.85))
 	draw_arc(Vector2.ZERO, RADIUS, 0.0, TAU, 48, C_BACK, WIDTH, true)
 	if _progress > 0.0:
 		# 从 12 点方向顺时针画进度弧。

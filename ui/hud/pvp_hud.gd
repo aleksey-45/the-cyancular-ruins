@@ -3,7 +3,7 @@ extends CanvasLayer
 
 # 联机对局 HUD 从 Round 读取比分、回合和结算信息。开局倒计时由 Broadcast 推进。
 
-signal leave_requested
+signal return_requested
 
 const STATUS_BANNER_SCENE := preload("res://ui/hud/status_banner.tscn")
 
@@ -60,7 +60,7 @@ var _sections: HBoxContainer
 var _grace_left := -1.0
 var _rows: Array[Label] = []
 var _remaining := -1.0
-var _leaving := false
+var _return_button: Button
 
 
 func _ready() -> void:
@@ -220,10 +220,10 @@ func _build_result() -> void:
 	_sections.add_theme_constant_override("separation", UiDesign.SP_8)
 	_sections.alignment = BoxContainer.ALIGNMENT_CENTER
 	body.add_child(_sections)
-	var back := UiDesign.ui_button("返回主菜单", UiDesign.T_H2, RESULT_BTN_SIZE, "gold")
-	back.name = "Back"
-	back.pressed.connect(_request_leave)
-	body.add_child(back)
+	_return_button = UiDesign.ui_button("返回房间", UiDesign.T_H2, RESULT_BTN_SIZE, "gold")
+	_return_button.name = "Back"
+	_return_button.pressed.connect(_request_return)
+	body.add_child(_return_button)
 
 
 # ── 运行期 ─────────────────────────────────────────────────────────────────
@@ -271,9 +271,9 @@ func show_round(round: Round) -> void:
 
 
 func _show_result(round: Round) -> void:
+	_broadcast.hide()
 	_result_title.text = round.title
 	_result_subtitle.text = round.subtitle
-	_result_subtitle.visible = mode != WorldSpec.ROYALE
 	for section in round.sections:
 		var box := VBoxContainer.new()
 		box.add_theme_constant_override("separation", UiDesign.SP_3)
@@ -300,17 +300,18 @@ static func _add_result_row(grid: GridContainer, values: Array, color: Color) ->
 		grid.add_child(UiDesign.label(str(value), UiDesign.T_H2, color))
 
 
-func _request_leave() -> void:
-	if not _leaving:
-		_leaving = true
-		leave_requested.emit()
+func _request_return() -> void:
+	if _return_button.disabled: return
+	_return_button.disabled = true
+	_return_button.text = "等待其他玩家返回房间…"
+	return_requested.emit()
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _result.visible and event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_ESCAPE:
 		get_viewport().set_input_as_handled()
-		_request_leave()
+		_request_return()
 
 
 func _update_timer(seconds: float) -> void:

@@ -8,10 +8,28 @@ func run(tree: SceneTree) -> void:
 		await _daylight_render(tree)
 		await _pickup_bindings(tree)
 	_camera(tree)
+	_result_panel(tree)
 	cleanup()
 	_detached_match()
 	await _solo_scene(tree)
 	await _loading_failure(tree)
+
+func _result_panel(tree: SceneTree) -> void:
+	var hud := PvpHud.new()
+	hud.mode = WorldSpec.ROYALE
+	tree.root.add_child(hud)
+	var result := PvpHud.Round.new()
+	result.title = "游戏结束"
+	result.subtitle = "平局"
+	hud.show_round(result)
+	expect(hud._result.visible and not hud._broadcast.visible and hud._result_subtitle.visible
+			and hud._result_subtitle.text == result.subtitle, "only the result panel shows the final outcome")
+	var returns: Array = []
+	hud.return_requested.connect(func() -> void: returns.append(true))
+	hud._return_button.pressed.emit()
+	hud._request_return()
+	expect(returns.size() == 1 and hud._return_button.disabled, "a confirmed player waits for the room without a second request")
+	hud.free()
 
 func _loading_failure(tree: SceneTree) -> void:
 	await SceneTransition.change_with_builder(tree, func() -> Node: return null, "载入中")
@@ -155,6 +173,14 @@ func _actor_animation(tree: SceneTree) -> void:
 	var reload: Transform2D = pose.call(1)
 	expect(absf(reload.get_rotation() - ready.get_rotation()) > 0.5 and reload.origin.y > ready.origin.y,
 			"the held gun tilts and drops during reload")
+	var lowest_drop := actor.position + Vector2.DOWN * CFG.weapon_pickup_radius
+	display._frame.pickups.append([actor.equipped.type_id, lowest_drop, true])
+	display._world.present(display._frame)
+	var key := display._world._pickup_nodes[0]
+	var ring := display._world._reload_node
+	expect(key.visible and ring.visible and key.position.y + PickupPrompt.BOX.y * 0.5 <
+			ring.position.y - ReloadRing.RADIUS - ReloadRing.WIDTH * 0.5,
+			"even the lowest reachable pickup leaves the whole reload ring visible")
 	display.free()
 	cleanup()
 

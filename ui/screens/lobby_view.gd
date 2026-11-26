@@ -26,7 +26,6 @@ const FILTER_COLORS := {
 # 房间号输入框为 8 位数字和内边距预留空间。
 const CODE_MIN_UNITS := 6
 const DIM_ALPHA := 0.55
-const JOIN_MIN_W := UiDesign.SP_10 * 6
 # 大厅内容区宽度上限为 1472 像素。在 1920 像素的逻辑视口中居中时，两侧各留 224 像素。
 const PAGE_MAX_W := 1472
 
@@ -35,8 +34,6 @@ var _filters := {}
 var _filters_row: HBoxContainer
 var _create: LobbyCreatePanel
 var _wait: LobbyWaitPanel
-var _join: PanelContainer
-var _join_code: LineEdit
 var _code: LineEdit
 var _browser: Control
 var _scroll: ScrollContainer
@@ -47,13 +44,12 @@ var _empty: Label
 var _status: Label
 var _create_button: Button
 var _join_button: Button
-var _create_mask: ColorRect
 var _page_margin: MarginContainer
 
 
 func mount(nickname: String, prefs: Dictionary) -> void:
 	theme = UiDesign.MENU_THEME
-	_build_background()
+	UiDesign.cover(self, UiDesign.shade(UiDesign.C_BG))
 	_build_page(nickname)
 	_build_overlays(prefs)
 
@@ -78,7 +74,6 @@ func set_status(message: String) -> void:
 func show_wait(room: Dictionary) -> void:
 	var open := not room.is_empty()
 	if open:
-		_join.hide()
 		_create.hide()
 		_wait.present(room)
 	_wait.visible = open
@@ -91,15 +86,6 @@ func close_create() -> void:
 	_create.hide()
 
 
-func _build_background() -> void:
-	var bg := ColorRect.new()
-	bg.name = "Bg"
-	bg.color = UiDesign.C_BG
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
-
-
 # ── 页面骨架 ────────────────────────────────────────────────────────────────
 
 func _build_page(nickname: String) -> void:
@@ -109,7 +95,7 @@ func _build_page(nickname: String) -> void:
 	get_viewport().size_changed.connect(_apply_page_width)
 	page.add_child(UiDesign.header_strip("—— 联机大厅 ——", UiDesign.T_H1, true))
 
-	var hint := UiDesign.label("同网段房主的房间会自动出现在下方;也可输入 8 位房间号加入",
+	var hint := UiDesign.label("同网段的公开房间会显示在下方，也可输入 8 位房间号加入",
 			UiDesign.T_SUB, UiDesign.C_TEXT_DIM)
 	hint.name = "Hint"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -123,8 +109,6 @@ func _build_page(nickname: String) -> void:
 
 
 func _apply_page_width() -> void:
-	if _page_margin == null:
-		return
 	var side := maxi(int(UiDesign.SP_6), int((get_viewport_rect().size.x - PAGE_MAX_W) * 0.5))
 	_page_margin.add_theme_constant_override("margin_left", side)
 	_page_margin.add_theme_constant_override("margin_right", side)
@@ -153,6 +137,7 @@ func _build_toolbar(page: VBoxContainer, nickname: String) -> void:
 
 	_code = UiDesign.ui_field()
 	_code.name = "CodeEdit"
+	_code.placeholder_text = "8 位房间号"
 	UiDesign.style_control(_code, UiDesign.T_H2)
 	_code.custom_minimum_size = Vector2(UiDesign.T_H2 * CODE_MIN_UNITS, 0)
 	bar.add_child(_code)
@@ -244,23 +229,21 @@ func _build_status(page: VBoxContainer) -> void:
 	row.add_child(back)
 
 
-# ── 弹层(建房 / 等待室 / 加入)──────────────────────────────────────────────
+# ── 建房与等待室──────────────────────────────────────────────
 
 func _build_overlays(prefs: Dictionary) -> void:
-	_create_mask = ColorRect.new()
-	_create_mask.name = "CreateDim"
-	_create_mask.color = UiDesign.C_BG
-	_create_mask.modulate.a = DIM_ALPHA
-	_create_mask.mouse_filter = Control.MOUSE_FILTER_STOP
-	_create_mask.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_create_mask.hide()
-	add_child(_create_mask)
+	var mask := UiDesign.shade(Color(UiDesign.C_BG, DIM_ALPHA), true)
+	UiDesign.cover(self, mask)
+	mask.hide()
 
 	var create_center := _overlay_center("CreateLayer")
 	_create = LobbyCreatePanel.new(prefs)
 	create_center.add_child(_create)
 	_create.hide()
-	_create.visibility_changed.connect(func() -> void: _create_mask.visible = _create.visible)
+	_create.visibility_changed.connect(func() -> void:
+		mask.visible = _create.visible
+		_page_margin.focus_behavior_recursive = Control.FOCUS_BEHAVIOR_DISABLED if _create.visible else Control.FOCUS_BEHAVIOR_INHERITED
+		if not _create.visible and _create_button.is_visible_in_tree(): _create_button.grab_focus())
 	_create.submitted.connect(create_requested.emit)
 	_create.preference_changed.connect(preference_changed.emit)
 
@@ -274,8 +257,6 @@ func _build_overlays(prefs: Dictionary) -> void:
 	_wait.exit_requested.connect(exit_room_requested.emit)
 	_wait.hue_changed.connect(preference_changed.emit.bind(&"pvp_color_hue"))
 
-	_build_join()
-
 
 # 全屏 CenterContainer 居中摆放面板，鼠标输入由面板处理。
 func _overlay_center(layer_name: String) -> CenterContainer:
@@ -287,57 +268,9 @@ func _overlay_center(layer_name: String) -> CenterContainer:
 	return center
 
 
-func _build_join() -> void:
-	_join = PanelContainer.new()
-	_join.name = "JoinDialog"
-	var body := UiDesign.skin_menu_panel(_join, Vector2(UiDesign.SP_9, UiDesign.SP_7))
-	var box := VBoxContainer.new()
-	box.name = "Content"
-	box.custom_minimum_size.x = JOIN_MIN_W
-	box.add_theme_constant_override("separation", UiDesign.SP_4)
-	body.add_child(box)
-
-	var title := UiDesign.label("加入房间", UiDesign.T_H2, UiDesign.C_GOLD)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_child(title)
-
-	_join_code = UiDesign.ui_field()
-	_join_code.name = "JoinCodeEdit"
-	UiDesign.style_control(_join_code, UiDesign.T_H2)
-	_join_code.placeholder_text = "房间号"
-	box.add_child(_join_code)
-
-	var buttons := HBoxContainer.new()
-	buttons.name = "Actions"
-	buttons.alignment = BoxContainer.ALIGNMENT_END
-	buttons.add_theme_constant_override("separation", UiDesign.SP_3)
-	box.add_child(buttons)
-
-	var cancel := UiDesign.ui_button("取消", UiDesign.T_H2, Vector2.ZERO, "quiet")
-	cancel.pressed.connect(_join.hide)
-	buttons.add_child(cancel)
-	var ok := UiDesign.ui_button("加入", UiDesign.T_H2, Vector2.ZERO, "primary")
-	ok.pressed.connect(_join_submitted)
-	buttons.add_child(ok)
-
-	_join.hide()
-	_overlay_center("JoinLayer").add_child(_join)
-
-
-func _join_submitted() -> void:
-	_join.hide()
-	var value := _join_code.text.strip_edges()
-	if not value.is_empty():
-		_code.text = value
-	join_requested.emit(value)
-
-
 # ── 列表 / 输入 ─────────────────────────────────────────────────────────────
 
 func _rebuild() -> void:
-	if _list == null:
-		return
 	for card in _cards:
 		_list.remove_child(card)
 		card.queue_free()
@@ -357,7 +290,6 @@ func _rebuild() -> void:
 func _display_code(code: String) -> void:
 	_code.text = code
 	_code.editable = code.is_empty()
-	_code.placeholder_text = "房间号" if code.is_empty() else "你的房间号(报给对手)"
 
 
 func _open_create() -> void:
@@ -367,6 +299,7 @@ func _open_create() -> void:
 func _join_clicked() -> void:
 	var code := _code.text.strip_edges()
 	if code.is_empty():
-		_join.visible = not _join.visible
+		_code.grab_focus()
+		_code.edit()
 	else:
 		join_requested.emit(code)
