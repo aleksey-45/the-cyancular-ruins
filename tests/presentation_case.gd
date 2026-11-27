@@ -99,6 +99,19 @@ func _lamp_render(tree: SceneTree) -> void:
 	expect(warm.get_pixel(88, 132).r > base.r + 0.03 and cool.get_pixel(88, 132).b > base.b + 0.03
 			and warm.get_pixel(88, 132).r > cool.get_pixel(88, 132).r, "both tones illuminate the actual normal-mapped tile layer")
 	expect(warm.get_pixel(110, 80) == off.get_pixel(110, 80), "air retains the sky color inside the light radius")
+	map.layers[CyrmMap.FIRST_BACKGROUND].fill(Color.SLATE_GRAY.to_rgba32())
+	var view := MatchView.new()
+	view._mount_backgrounds(viewport, map, Vector2.ZERO)
+	view.free()
+	await RenderingServer.frame_post_draw
+	var background := viewport.get_texture().get_image()
+	canvas.eye_light(Transform2D(0.0, Vector2.ONE * WorldCanvas.PLAYER_CONFIG.body_scale, 0.0, Vector2(88, 128)))
+	await RenderingServer.frame_post_draw
+	var eyes := viewport.get_texture().get_image()
+	expect(eyes.get_pixel(88, 132).get_luminance() > background.get_pixel(88, 132).get_luminance() + 0.02,
+			"the eye light illuminates nearby terrain")
+	expect(background.get_pixel(88, 124) != off.get_pixel(88, 124) and eyes.get_pixel(88, 124) == background.get_pixel(88, 124),
+			"the painted parallax background keeps its color inside the eye light")
 	viewport.free()
 
 func _bird_materials(tree: SceneTree) -> void:
@@ -435,7 +448,6 @@ func _player_lighting_render(viewport: SubViewport, canvas: WorldCanvas) -> void
 		view.present(frame)
 		for light in canvas._eye_lights:
 			light.enabled = eyes
-		canvas.rect(Rect2(96, 27, 20, 30), Color.GRAY, -1, false)
 		await RenderingServer.frame_post_draw
 		return viewport.get_texture().get_image()
 	var morning: Image = await render.call(9 * 60, false)
@@ -449,9 +461,8 @@ func _player_lighting_render(viewport: SubViewport, canvas: WorldCanvas) -> void
 	var night_base: Image = await render.call(0.0, false)
 	var night: Image = await render.call(0.0)
 	expect(night.get_pixel(61, 36).r > night_base.get_pixel(61, 36).r + 0.4
-			and night.get_pixel(78, 36).r > night_base.get_pixel(78, 36).r + 0.4
-			and night.get_pixel(99, 38).b > night_base.get_pixel(99, 38).b + 0.02,
-			"one point light illuminates both eyes and a nearby surface")
+			and night.get_pixel(78, 36).r > night_base.get_pixel(78, 36).r + 0.4,
+			"one point light illuminates both eyes")
 	var other := MatchFrame.Pose.new()
 	other.id = 2
 	other.anchor = actor.anchor

@@ -129,6 +129,7 @@ func eye_light(pose: Transform2D) -> void:
 		var node := PointLight2D.new()
 		node.texture = EYE_LIGHT
 		node.texture_scale = 1.0 / PLAYER_CONFIG.body_scale
+		node.range_item_cull_mask = StreetLamps.RECEIVER_MASK
 		node.height = 32.0
 		add_child(node)
 		_eye_lights.append(node)
