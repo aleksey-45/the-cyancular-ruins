@@ -58,6 +58,7 @@ func _ready() -> void:
 	session.selection_changed.connect(_selection_changed)
 	session.cells_changed.connect(canvas.paint_cells)
 	session.points_changed.connect(_refresh_points)
+	session.point_rejected.connect(_say)
 	canvas.session = session
 	canvas.brush = brush
 	canvas.tool_pressed.connect(_tool_pressed)
@@ -150,6 +151,7 @@ func _build_ui() -> void:
 	_inspector.setup(session, brush, canvas,
 			[["复制选区", session.copy_selection], ["剪切选区", _cut], ["粘贴", _paste]], _sync_context)
 	_points = _inspector.points
+	canvas.placement_type = _points.placed_fields
 	_points.place_button.toggled.connect(func(_placing: bool) -> void:
 		canvas.cancel()
 		_sync_context())
@@ -245,6 +247,7 @@ func _paste() -> void:
 
 func _refresh_points(updated_id: int) -> void:
 	canvas.cancel()
+	canvas.refresh_lamps()
 	canvas.markings.queue_redraw()
 	_points.refresh(updated_id)
 
@@ -288,7 +291,8 @@ func _point_pressed(cell: Vector2i, id: int, double_click: bool) -> void:
 		if placed >= 0: _select_point(placed)
 		return
 	if double_click and active_tool == "point":
-		start_trial(session.map.points[id].cell if id >= 0 else cell)
+		if id >= 0: _select_point(id)
+		start_trial(SpawnPicker.NO_CELL if id >= 0 else cell)
 		return
 	_select_point(id)
 	_choose_tool("point")
@@ -310,7 +314,7 @@ func _notes_dialog() -> void:
 	dialog.confirmed.connect(func() -> void: session.put_notes(field.text))
 	_files.show_dialog(dialog)
 
-func start_trial(cell: Vector2i = session.selected_point().get("cell", SpawnPicker.NO_CELL)) -> void:
+func start_trial(cell := SpawnPicker.NO_CELL) -> void:
 	_trial.start(cell)
 
 func finish_trial() -> void:

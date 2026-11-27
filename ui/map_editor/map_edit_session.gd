@@ -6,6 +6,7 @@ signal selection_changed
 signal cells_changed(layer: int, changes: PackedInt32Array)
 ## 传点位 ID 时只更新该项。传 -1 时重建点位列表。
 signal points_changed(updated_id: int)
+signal point_rejected(reason: String)
 
 const POINT_EDIT_BYTES := 128
 
@@ -126,22 +127,31 @@ func point_ids() -> Array[int]:
 	var ids: Array = map.points.keys()
 	ids.sort()
 	var ordered: Array[int] = []
-	for kind in ["player", "player2", "respawn", "enemy"]:
+	for kind in ["lamp", "player", "player2", "respawn", "enemy"]:
 		for id: int in ids:
 			if map.points[id].kind == kind: ordered.append(id)
 	return ordered
 
 func dragged_point_cell(cell: Vector2i, from_subcell: Vector2i, to_subcell: Vector2i) -> Vector2i:
-	return (cell + to_subcell - from_subcell).clamp(Vector2i.ZERO, map.size - Vector2i.ONE)
+	var at := cell + to_subcell - from_subcell
+	if selected_point().get("kind") == "lamp":
+		return Vector2i(posmod(at.x, map.size.x), posmod(at.y, map.size.y))
+	return at.clamp(Vector2i.ZERO, map.size - Vector2i.ONE)
 
 func commit_point(id: int, target: Variant) -> int:
 	if id < 0: return -1
-	_put_point(0, id, target)
+	var before: Dictionary = map.points.get(id, {})
+	var row: Dictionary = before.merged({"cell": target}, true) if target is Vector2i else target
+	if row.get("kind") == "lamp" and (before.get("kind") != "lamp" or before.cell != row.cell):
+		var problem := CyrmMap.lamp_problem(map, row.cell, id)
+		if not problem.is_empty():
+			point_rejected.emit(problem)
+			return -1
+	_put_point(0, id, row)
 	return id
 
-func _put_point(direction: int, id: int, target: Variant) -> void:
+func _put_point(direction: int, id: int, row: Dictionary) -> void:
 	var previous: Dictionary = map.points.get(id, {})
-	var row: Dictionary = previous.merged({"cell": target}, true) if target is Vector2i else target
 	if previous == row: return
 	if row.is_empty(): map.points.erase(id)
 	else: map.points[id] = row

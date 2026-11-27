@@ -309,7 +309,7 @@ func _lighting_preview(editor: MapEditor) -> void:
 	var canvas := editor.canvas
 	canvas.zoom = 4
 	canvas.origin = Vector2(200, 80)
-	var edge := Vector2i(canvas.terrain.get_global_transform_with_canvas() * Vector2(0, 75.5))
+	var edge := Vector2i(canvas.get_global_transform_with_canvas() * (canvas.origin + Vector2(0, 75.5) * canvas.zoom))
 	var pixel := edge + Vector2i(8, 0)
 	var outside := edge - Vector2i(4, 0)
 	var screen := canvas.get_viewport().get_texture()
@@ -326,6 +326,83 @@ func _lighting_preview(editor: MapEditor) -> void:
 	canvas.preview_minute = -1.0
 	await RenderingServer.frame_post_draw
 	expect(screen.get_image().get_pixelv(pixel) == raw.get_pixelv(pixel), "closing the preview restores the original canvas color")
+
+	var map := CyrmMap.create(Vector2i(24, 20))
+	for x in 24: map.layers[CyrmMap.SCENE][10 * 24 + x] = _stone
+	map.points[1] = {"kind": "lamp", "cell": Vector2i(0, 9), "tone": "warm"}
+	editor._files.open_document(map, "")
+	canvas.origin = Vector2(24, 20)
+	canvas.zoom = 10
+	canvas.torus = true
+	canvas.grid = false
+	canvas.refresh_view()
+	canvas.preview_minute = 0.0
+	await RenderingServer.frame_post_draw
+	var page := canvas.terrain.get_viewport().get_texture()
+	var lit := page.get_image()
+	canvas._lamps.night = 0.0
+	await RenderingServer.frame_post_draw
+	var unlit := page.get_image()
+	for cell: Vector2 in [Vector2(1.5, 10.5), Vector2(23.5, 10.5), Vector2(25.5, 30.5)]:
+		var sample := Vector2i(canvas.terrain.get_global_transform_with_canvas() * cell)
+		expect(lit.get_pixelv(sample).r > unlit.get_pixelv(sample).r + 0.02,
+				"editor night preview lights the floor across the seam and on the repeated page at %s" % cell)
+	canvas.preview_minute = -1.0
+	canvas.torus = false
+	canvas.grid = true
+	canvas.refresh_view()
+
+func _lamp_workflow(tree: SceneTree, editor: MapEditor) -> void:
+	var s := editor.session
+	var c := editor.canvas
+	editor._files.open_document(_sample(), "")
+	editor._set_layer(CyrmMap.SCENE)
+	editor._choose_tool("point")
+	c.zoom = 12
+	c.origin = Vector2(50, 20)
+	var types := editor._points._type
+	var warm := editor._points._option_for({"kind": "lamp", "tone": "warm"})
+	var cool := editor._points._option_for({"kind": "lamp", "tone": "cool"})
+	types.select(warm)
+	types.item_selected.emit(warm)
+	var foot := Vector2i(16, 21)
+	_click_cell(c, foot)
+	var id := s.selected_point_id
+	expect(id >= 0 and s.selected_point() == {"kind": "lamp", "cell": foot, "tone": "warm"}
+			and editor._points.is_placing(), "the point palette places a warm street lamp and stays ready for the next one")
+	var revision := s.revision
+	_click_cell(c, foot)
+	expect(s.revision == revision and editor._status.text.contains("重叠"), "overlapping lamps report the reason without making an undo step")
+	_click_cell(c, foot + Vector2i.UP)
+	expect(s.revision == revision and editor._status.text.contains("实心墙"), "a floating lamp is rejected")
+	_click_button(editor._points.place_button)
+	_mouse(c, foot + Vector2i.UP * 3, true)
+	_mouse(c, foot + Vector2i(4, -3), false)
+	foot += Vector2i(4, 0)
+	expect(s.selected_point().cell == foot, "dragging the lantern by its upper housing moves its foot by the same offset")
+	types.select(cool)
+	types.item_selected.emit(cool)
+	expect(s.selected_point().tone == "cool" and s.undo() and s.selected_point().tone == "warm"
+			and s.redo() and s.selected_point().tone == "cool", "recolor and history retain the same lamp ID")
+	var support := CyrmMap.lamp_support(foot, s.map.size)
+	s.put_cells([foot.x, foot.y - 4, _stone])
+	expect(not c._lamps._supports.has(support) and s.map.points.has(id)
+			and CyrmMap.lamp_problem(s.map, foot, id).contains("五格"), "painting the top clearance leaves an invalid draft marker")
+	expect(CyrmMap.from_bytes(CyrmMap.to_bytes(s.map)) == s.map and s.undo() and c._lamps._supports.has(support),
+			"the invalid draft round trips and undo restores its fixture")
+	s.put_cells([foot.x, foot.y + 1, CyrmMap.tile_value(21)])
+	expect(not c._lamps._supports.has(support) and s.undo() and c._lamps._supports.has(support), "water cannot support the housing")
+	c.preview_minute = 0.0
+	c.grab_focus()
+	_key(editor, KEY_F5)
+	await tree.physics_frame
+	var trial := editor._trial.trial
+	expect(trial.spec.solo_spawn == SpawnPicker.single_spawn(s.map) and trial.preview_minute == 0.0
+			and trial._view._canvas.lamps._supports.has(support), "F5 on a lamp uses the player spawn and the unsaved nighttime fixture")
+	editor.finish_trial()
+	c.preview_minute = -1.0
+	_key(editor, KEY_DELETE)
+	expect(not s.map.points.has(id) and s.undo() and s.map.points[id].tone == "cool", "delete and undo restore the lamp under its original ID")
 
 func _canvas_tools(editor: MapEditor) -> void:
 	var s := editor.session
@@ -667,6 +744,7 @@ func _workflow(tree: SceneTree) -> void:
 	editor._files.open_document(_sample(), "")
 	_workspace_controls(editor)
 	await _point_selection(tree, editor)
+	await _lamp_workflow(tree, editor)
 	editor._files.open_document(_sample(), "")
 	editor._files.file_selected(true, PackedStringArray([path.get_basename()]), 0, true)
 	expect(editor.session.path == path and FileAccess.file_exists(path), "native Save As accepts a path without its CYRM extension")

@@ -17,10 +17,13 @@ func setup(p_session: MapEditSession, p_canvas: MapEditCanvas, p_workspace: Cont
 func active() -> bool:
 	return trial != null
 
-func start(cell: Vector2i = session.selected_point().get("cell", SpawnPicker.NO_CELL)) -> void:
+func start(cell: Vector2i) -> void:
 	if trial != null:
 		return
 	var map := session.map
+	var selected := session.selected_point()
+	if cell == SpawnPicker.NO_CELL and not selected.is_empty() and selected.kind != "lamp":
+		cell = selected.cell
 	var spawn := cell if session.bounds.has_point(cell) else SpawnPicker.single_spawn(map)
 	if spawn == SpawnPicker.NO_CELL:
 		say.call("地图没有可用起点")

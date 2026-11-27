@@ -67,7 +67,7 @@ func _build() -> void:
 	shortcuts[KEY_F5] = play_requested.emit
 	var play := UiKit.button(bar, "试玩  F5", play_requested.emit)
 	play.theme_type_variation = &"ToolPrimary"
-	play.tooltip_text = "从所选点位试玩当前地图，Esc 返回"
+	play.tooltip_text = "从所选出生点试玩，选中路灯时使用关卡出生点，Esc 返回"
 	UiKit.button(bar, "退出编辑器", exit_requested.emit).tooltip_text = "返回主菜单 · Esc"
 
 func _build_light_preview(bar: Control) -> void:

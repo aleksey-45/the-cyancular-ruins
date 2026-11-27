@@ -10,6 +10,7 @@ var session: MapEditSession
 var brush: MapBrush
 var cursor_width := 1
 var point_hint := ""
+var placement_type: Callable
 var zoom := 6.0:
 	set(value):
 		zoom = clampf(value, 0.15, 64.0)
@@ -23,7 +24,10 @@ var origin := Vector2(20, 20):
 		preview.queue_redraw()
 var grid := true
 var subgrid := false
-var torus := false
+var torus := false:
+	set(value):
+		torus = value
+		refresh_lamps()
 var guides := false
 var dim_others := false
 var mouse_cell := Vector2i(-1, -1)
@@ -34,16 +38,20 @@ var _on_release: Callable
 var _points: Array[Vector2i] = []
 var _tip: Vector2i:
 	get: return mouse_cell.clamp(Vector2i.ZERO, session.map.size - Vector2i.ONE)
-var terrain := UiDesign.shade(Color("#26363b"))
+var terrain := Control.new()
+var _page := UiDesign.shade(Color("#26363b"))
 var _sky := Daylight.new()
+var _ambient := CanvasModulate.new()
 var _map_layers := Node2D.new()
+var _lamps := StreetLamps.new()
 var _major_grid := UiDesign.shade(Color(0.75, 0.88, 0.85))
 var _minor_grid := UiDesign.shade(Color(1, 1, 1, 0.12))
 var preview_minute := -1.0:
 	set(value):
 		preview_minute = value
 		_sky.visible = value >= 0.0
-		_map_layers.modulate = _sky.set_minute(value) if _sky.visible else Color.WHITE
+		_ambient.color = _sky.set_minute(value) if _sky.visible else Color.WHITE
+		_lamps.night = _sky.night if _sky.visible else 0.0
 		markings.queue_redraw()
 		preview.queue_redraw()
 var markings := Node2D.new()
@@ -66,12 +74,30 @@ func _ready() -> void:
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
+	var display := SubViewportContainer.new()
+	display.stretch = true
+	display.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	UiDesign.cover(self, display)
+	var viewport := SubViewport.new()
+	viewport.disable_3d = true
+	viewport.transparent_bg = true
+	viewport.world_2d = World2D.new()
+	display.add_child(viewport)
+	viewport.add_child(_ambient)
+	viewport.add_child(terrain)
 	terrain.clip_contents = true
-	add_child(terrain)
+	terrain.add_child(_page)
 	_sky.visible = preview_minute >= 0.0
-	UiDesign.cover(terrain, _sky)
-	terrain.add_child(_map_layers)
+	var unshaded := CanvasItemMaterial.new()
+	unshaded.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+	_sky.material = unshaded
+	UiDesign.cover(_page, _sky)
+	_page.add_child(_map_layers)
+	_lamps.scale = Vector2.ONE / CyrmMap.CELL_SIZE
+	terrain.add_child(_lamps)
+	_tiles[CyrmMap.SCENE].visibility_changed.connect(func() -> void: _lamps.visible = _tiles[CyrmMap.SCENE].visible)
 	for tiles in _tiles:
+		tiles.light_mask |= StreetLamps.RECEIVER_MASK
 		tiles.collision_enabled = false
 		tiles.navigation_enabled = false
 		tiles.occlusion_enabled = false
@@ -86,7 +112,8 @@ func _ready() -> void:
 	grid_material.shader = preload("res://ui/map_editor/grid.gdshader")
 	for overlay in [_minor_grid, _major_grid]:
 		overlay.material = grid_material
-		UiDesign.cover(terrain, overlay)
+		overlay.z_index = 2
+		UiDesign.cover(_page, overlay)
 	add_child(markings)
 	markings.draw.connect(_draw_markings)
 	add_child(preview)
@@ -135,6 +162,12 @@ func paint_cells(layer: int, changes: PackedInt32Array) -> void:
 	else:
 		for i in range(0, changes.size(), 3):
 			_paint_tile(_tiles[layer], Vector2i(changes[i], changes[i + 1]), changes[i + 2])
+	if layer < 0 or layer == CyrmMap.SCENE:
+		refresh_lamps()
+
+func refresh_lamps() -> void:
+	_lamps.install(session.map, Vector2.ZERO, Vector2i.ONE if torus else Vector2i.ZERO)
+	markings.queue_redraw()
 
 func _paint_tile(tiles: TileMapLayer, cell: Vector2i, value: int) -> void:
 	if CyrmMap.tile_material(value) == 0:
@@ -159,15 +192,16 @@ func _paint_tile(tiles: TileMapLayer, cell: Vector2i, value: int) -> void:
 
 func _set_tile_image(atlas: TileSetAtlasSource, opaque: int) -> void:
 	atlas.texture_region_size = _palette.tile_size
-	atlas.texture = ImageTexture.create_from_image(TerrainAtlas.tile_image(_palette.tile_size.x * TerrainAtlas.SUBS_PER_TEXTURE, opaque))
+	atlas.texture = TerrainAtlas.tile_surface(_palette.tile_size.x * TerrainAtlas.SUBS_PER_TEXTURE, opaque)
 
 func refresh_view() -> void:
 	if session == null or session.map.is_empty():
 		return
 	terrain.position = origin
 	terrain.scale = Vector2.ONE * zoom
-	terrain.size = Vector2(session.map.size)
-	RenderingServer.canvas_set_item_repeat(terrain.get_canvas_item(), terrain.size if torus else Vector2.ZERO, 1)
+	_page.size = Vector2(session.map.size)
+	terrain.size = _page.size * (2 if torus else 1)
+	RenderingServer.canvas_set_item_repeat(_page.get_canvas_item(), _page.size if torus else Vector2.ZERO, 1)
 	var spacing := 4
 	while spacing * zoom < 14.0:
 		spacing *= 2
@@ -182,6 +216,7 @@ func refresh_view() -> void:
 		for tiles in _tiles: tiles.scale = Vector2.ONE / detail
 	for layer in planes.size():
 		planes[layer].modulate = Color(0.43, 0.46, 0.5) if dim_others and layer != session.layer else Color.WHITE
+	_lamps.modulate = planes[CyrmMap.SCENE].modulate
 	markings.queue_redraw()
 	preview.queue_redraw()
 
@@ -203,7 +238,12 @@ func _draw_markings() -> void:
 			var selected := id == session.selected_point_id
 			if selected and _gesture == "point_drag": continue
 			var row: Dictionary = session.map.points[id]
-			_draw_point(markings, row, _marker_center(row.cell, corner), selected)
+			if row.kind == "lamp":
+				var problem := CyrmMap.lamp_problem(session.map, row.cell, id)
+				if selected or not problem.is_empty():
+					_lamp_outline(markings, row.cell, corner, selected, not problem.is_empty())
+			else:
+				_draw_point(markings, row, _marker_center(row.cell, corner), selected)
 		if i != 0:
 			markings.draw_rect(shape, Color(0, 0, 0, 0.22))
 		markings.draw_rect(shape, Color("#739b9c"), false, 1.0)
@@ -227,7 +267,10 @@ func _point_at(event: InputEventMouse) -> int:
 		var item: Dictionary = session.map.points[id]
 		var delta := event.position - _marker_center(item.cell, origin)
 		var distance := delta.length_squared()
-		if distance > radius * radius:
+		if item.kind == "lamp":
+			if mouse_cell.x != item.cell.x or posmod(item.cell.y - mouse_cell.y, session.map.size.y) >= CyrmMap.LAMP_HEIGHT:
+				continue
+		elif distance > radius * radius:
 			if item.kind != "enemy" or zoom < 3.5:
 				continue
 			var icon: Dictionary = _enemy_icons[item.type]
@@ -247,7 +290,7 @@ func _draw_point(target: Node2D, row: Dictionary, pos: Vector2, selected: bool, 
 		var icon: Dictionary = _enemy_icons[row.type]
 		var sprite: Texture2D = icon.sprite
 		var extent: Vector2 = sprite.get_size() * icon.scale * zoom / 16.0
-		target.draw_texture_rect(sprite, Rect2(pos - extent / 2.0, extent), false, tint * _map_layers.modulate)
+		target.draw_texture_rect(sprite, Rect2(pos - extent / 2.0, extent), false, tint * _ambient.color)
 	else:
 		var fill := Color("#f2d391")
 		var letter := "P" if row.kind == "player" else "2"
@@ -270,11 +313,44 @@ func _screen_box(area: Rect2i) -> Rect2:
 func _cell_center(cell: Vector2i) -> Vector2:
 	return origin + (Vector2(cell) + Vector2(0.5, 0.5)) * zoom
 
+func _lamp_outline(target: Node2D, cell: Vector2i, corner: Vector2, selected: bool, invalid: bool) -> void:
+	var bulb := Vector2(cell) + Vector2(0.5, 2 - CyrmMap.LAMP_HEIGHT)
+	var body := Rect2(Vector2(cell) + Vector2(0, 1 - CyrmMap.LAMP_HEIGHT), Vector2(1, CyrmMap.LAMP_HEIGHT))
+	var radius := _lamps.radius / CyrmMap.CELL_SIZE if selected else 0.0
+	var bounds := body.grow_individual(0, 0, 0, 1).merge(Rect2(bulb, Vector2.ZERO).grow(radius))
+	var span := Vector2(session.map.size)
+	var copies := ToroidalGrid.seam_copy_range(bounds, span, Vector2.ZERO)
+	var color := UiDesign.C_DANGER if invalid else UiDesign.C_ACCENT
+	for y in range(copies.position.y, copies.end.y):
+		for x in range(copies.position.x, copies.end.x):
+			var offset := corner + Vector2(x, y) * span * zoom
+			target.draw_rect(Rect2(offset + body.position * zoom, body.size * zoom), color, false, 1)
+			if selected:
+				target.draw_rect(Rect2(offset + Vector2(cell + Vector2i.DOWN) * zoom, Vector2.ONE * zoom), color, false, 2)
+				target.draw_arc(offset + bulb * zoom, radius * zoom, 0, TAU, 64, Color(color, 0.65), 1, true)
+
 func _overlay() -> void:
 	if session == null or session.map.is_empty(): return
+	var row: Dictionary = placement_type.call()
+	var cell := mouse_cell
+	var id := destination_point_id
 	if _gesture == "point_drag":
-		var row := session.selected_point()
-		var cell := session.dragged_point_cell(row.cell, _points[0], _tip)
+		id = session.selected_point_id
+		row = session.selected_point()
+		cell = session.dragged_point_cell(row.cell, _points[0], _tip)
+	elif id >= 0:
+		row = session.map.points[id]
+	if row.get("kind") == "lamp" and session.bounds.has_point(mouse_cell):
+		var problem := CyrmMap.lamp_problem(session.map, cell, id)
+		for i in (COPIES.size() if torus else 1):
+			_lamp_outline(preview, cell, _copy_origin(i), true, not problem.is_empty())
+		if not problem.is_empty():
+			var at := _cell_center(mouse_cell) + Vector2(10, -10)
+			var width := PixelFont.FONT.get_string_size(problem, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x
+			at = at.clamp(Vector2(2, 24), Vector2(maxf(2, size.x - width - 2), size.y - 2))
+			preview.draw_string_outline(PixelFont.FONT, at, problem, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, 4, UiDesign.C_BG)
+			preview.draw_string(PixelFont.FONT, at, problem, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, UiDesign.C_DANGER)
+	elif _gesture == "point_drag":
 		for i in (COPIES.size() if torus else 1):
 			var tint := Color.WHITE if i == 0 else Color(0.78, 0.78, 0.78)
 			_draw_point(preview, row, _marker_center(cell, _copy_origin(i)), true, tint)

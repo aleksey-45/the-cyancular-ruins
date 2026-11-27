@@ -28,7 +28,7 @@ func _build() -> void:
 	UiKit.label(self, "点位类型")
 
 	_type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_type.tooltip_text = "选择要放置的出生点或敌人类型"
+	_type.tooltip_text = "选择出生点、敌人或路灯"
 	_type.item_selected.connect(_change_type)
 	add_child(_type)
 	_option("单人出生点", {"kind": "player"})
@@ -37,6 +37,8 @@ func _build() -> void:
 		_option("侧 %d 复活点" % side, {"kind": "respawn", "side": side})
 	for id: String in EnemyType.PATHS:
 		_option("敌人 · " + str(ENEMY_LABELS.get(id, id)), {"kind": "enemy", "type": id})
+	_option("路灯 · 暖白", {"kind": "lamp", "tone": "warm"})
+	_option("路灯 · 冷青", {"kind": "lamp", "tone": "cool"})
 
 	_list.custom_minimum_size.y = 270
 	_list.item_selected.connect(func(index: int) -> void:
@@ -53,7 +55,7 @@ func sync() -> void:
 	var placing := is_placing()
 	var point := session.selected_point()
 	var kind: String = point.get("kind", "")
-	var editable_type := not placing and kind in ["enemy", "respawn"]
+	var editable_type := not placing and kind in ["enemy", "respawn", "lamp"]
 	_details.visible = not kind.is_empty() and not placing
 	if editable_type: _type.select(_option_for(point))
 	for i in _type.item_count:
@@ -82,12 +84,13 @@ func is_placing() -> bool:
 	return place_button.button_pressed
 
 func placed_fields() -> Dictionary:
-	return _type.get_selected_metadata()
+	return _type.get_selected_metadata() if is_placing() else {}
 
 func reset_placing() -> void:
 	place_button.set_pressed_no_signal(false)
 
 func _change_type(index: int) -> void:
+	canvas.preview.queue_redraw()
 	var choice: Dictionary = _type.get_item_metadata(index)
 	var point := session.selected_point()
 	if not is_placing() and point.get("kind") == choice.kind:

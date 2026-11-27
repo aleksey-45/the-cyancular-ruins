@@ -24,7 +24,7 @@ func setup(definitions: Dictionary, active: String) -> void:
 		_buttons[id] = button
 		var key: Key = definition.key
 		if id == "point":
-			button.tooltip_text = "点位：右侧选择出生点/敌人类型，勾选放置点位后单击画布"
+			button.tooltip_text = "在右侧选择点位类型，勾选连续放置后单击画布"
 		else:
 			button.tooltip_text = button.text + (" " + OS.get_keycode_string(key) if key != KEY_NONE else "")
 		if key != KEY_NONE:
