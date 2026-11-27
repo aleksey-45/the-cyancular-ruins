@@ -108,8 +108,13 @@ func submit() -> void:
 	_foreground.queue_redraw()
 	overlay_layer.queue_redraw()
 
+static func diffuse(texture: Texture2D) -> Texture2D:
+	return texture.diffuse_texture if texture is CanvasTexture else texture
+
 func sprite(texture: Texture2D, region: Rect2, pose: Transform2D, color := Color.WHITE,
 		sprite_pass := Pass.NORMAL) -> void:
+	if sprite_pass == Pass.GLOW or sprite_pass == Pass.MASK:
+		texture = diffuse(texture)
 	var separate := _split_player_batches and sprite_pass == Pass.PLAYER_BODY
 	var batch := _foreground if sprite_pass == Pass.FOREGROUND else _batch(sprite_pass, separate)
 	batch.rows.append([texture, region, pose, color])

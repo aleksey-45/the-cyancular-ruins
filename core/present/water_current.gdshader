@@ -10,12 +10,16 @@ uniform float wave_speed;
 uniform float wave_amplitude;
 
 varying vec2 water_pixel;
+varying float ripple_tilt;
 
 void vertex() {
+	ripple_tilt = 0.0;
 	if (wave) {
 		// 水纹随表层网格伸缩。顶点色记录波形相位和权重。
 		water_pixel = UV / TEXTURE_PIXEL_SIZE;
-		VERTEX.y += sin(elapsed * wave_speed + COLOR.r * TAU) * wave_amplitude * COLOR.g;
+		float phase = elapsed * wave_speed + COLOR.r * TAU;
+		VERTEX.y += sin(phase) * wave_amplitude * COLOR.g;
+		ripple_tilt = cos(phase) * wave_amplitude * 0.1 * COLOR.g;
 		COLOR = vec4(1.0);
 	} else {
 		water_pixel = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy;
@@ -34,6 +38,7 @@ float stripe_strength(vec2 pixel) {
 }
 
 void fragment() {
+	NORMAL = normalize(NORMAL + vec3(ripple_tilt, 0.0, 0.0));
 	// 环面地图的副本沿用原位置的水纹相位。
 	vec2 pixel = wave ? water_pixel : mod(water_pixel, map_size);
 	COLOR.rgb = mix(COLOR.rgb, vec3(1.0), stripe_strength(pixel));

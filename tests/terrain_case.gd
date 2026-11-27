@@ -480,6 +480,19 @@ func _water_atlas() -> void:
 	expect(colored_body.get_data() != body.get_data() and colored_surface.get_data() != surface.get_data(),
 			"the same tint applies to both water textures")
 	expect(TerrainAtlas.tile_image(8, 0).get_pixel(0, 0).a == 0.0, "air has a transparent tile image")
+	var chain := CyrmMap.tile_value(13)
+	var painted := CyrmMap.tile_value(13, tint)
+	for channel in [TerrainAtlas.Channel.NORMAL, TerrainAtlas.Channel.SPECULAR]:
+		var packed := TerrainAtlas._atlas_channel({chain: 0, painted: 1}, channel)
+		var source := TerrainAtlas.tile_image(64, chain, channel)
+		for quad in TerrainAtlas.QUAD_COLS:
+			var size := Vector2i.ONE * TerrainAtlas.QUAD_TILE
+			var rect := Rect2i(Vector2i(quad % 4, quad / 4) * size, size)
+			var expected := source.get_region(rect).get_data()
+			for row in 2:
+				var at := TerrainAtlas.atlas_coords(row, quad) * size
+				expect(packed.get_region(Rect2i(at, size)).get_data() == expected,
+						"terrain channel %d retains subcell %d in painted row %d" % [channel, quad, row])
 	var water_map := CyrmMap.create(Vector2i(4, 4))
 	var cells: PackedInt32Array = water_map.layers[CyrmMap.SCENE]
 	var transparent := Vector4i(7, 4, 4, 0)

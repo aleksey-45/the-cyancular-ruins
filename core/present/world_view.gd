@@ -1,7 +1,7 @@
 class_name WorldView
 extends RefCounted
 
-const WEAPONS := preload("res://assets/textures/weapons.png")
+const WEAPONS := preload("res://assets/textures/weapons_surface.tres")
 const BULLETS := preload("res://assets/textures/bullets.png")
 const EXPLOSION := preload("res://assets/textures/effects.png")
 const PLAYER_FRAMES := preload("res://scenes/player/player_frames.tres")

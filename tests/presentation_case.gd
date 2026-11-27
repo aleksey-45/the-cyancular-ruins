@@ -2,6 +2,7 @@ extends "res://tests/simulation_fixture.gd"
 
 func run(tree: SceneTree) -> void:
 	_actor_animation(tree)
+	_bird_materials(tree)
 	_damage_numbers(tree)
 	_daylight(tree)
 	if DisplayServer.get_name() != "headless":
@@ -13,6 +14,21 @@ func run(tree: SceneTree) -> void:
 	_detached_match()
 	await _solo_scene(tree)
 	await _loading_failure(tree)
+
+func _bird_materials(tree: SceneTree) -> void:
+	var canvas := canvas_for(tree.root)
+	var image := EnemyType.get_type("black_bird").frames.get_frame_texture(&"sleep", 0) as AtlasTexture
+	var surface := image.atlas as CanvasTexture
+	var trails := AfterImageField.new()
+	canvas.begin(1)
+	for style in [WorldCanvas.Pass.NORMAL, WorldCanvas.Pass.MASK, WorldCanvas.Pass.GLOW]:
+		canvas.sprite(surface, image.region, Transform2D.IDENTITY, Color.WHITE, style)
+	trails.spawn(0.0, image, Transform2D.IDENTITY, Color.WHITE, WorldCanvas.Pass.NORMAL, 1.0)
+	trails.present(0.1, Vector2.ZERO, canvas, Vector2(320, 240))
+	expect(canvas._batches[0].rows[0][0] == surface, "the bird body uses its lit surface")
+	for i in range(1, 4):
+		expect(canvas._batches[i].rows[0][0] == surface.diffuse_texture, "silhouette, glow and trail use the original bird art")
+	canvas.free()
 
 func _result_panel(tree: SceneTree) -> void:
 	var hud := PvpHud.new()
@@ -295,7 +311,30 @@ func _daylight_render(tree: SceneTree) -> void:
 		expect(image.get_pixel(41, 52) == ground and image.get_pixel(54, 52) == ground,
 				"nearby geometry casts no shadow on either side at %02d:00" % hour)
 	await _player_lighting_render(viewport, canvas)
+	await _weapon_highlight(viewport, canvas)
 	viewport.free()
+
+func _weapon_highlight(viewport: SubViewport, canvas: WorldCanvas) -> void:
+	viewport.size = Vector2i(192, 64)
+	var metal := WorldView.WEAPONS
+	var matte := metal.duplicate() as CanvasTexture
+	matte.specular_color = Color.BLACK
+	var region: Rect2 = WeaponRegistry.definition(8)["region"]
+	canvas.set_daylight(540)
+	canvas._directional.energy = 0.88
+	canvas._directional.height = 0.47
+	canvas.begin(0)
+	canvas.sprite(matte, region, Transform2D(0.0, Vector2(48, 32)))
+	canvas.sprite(metal, region, Transform2D(0.0, Vector2(144, 32)))
+	canvas.submit()
+	await RenderingServer.frame_post_draw
+	var image := viewport.get_texture().get_image()
+	var highlights := 0
+	for y in range(18, 46):
+		for x in range(10, 86):
+			if image.get_pixel(x + 96, y).get_luminance() > image.get_pixel(x, y).get_luminance() + 0.008:
+				highlights += 1
+	expect(highlights > 5, "the authored weapon reflects light through its native specular map")
 
 func _player_lighting_render(viewport: SubViewport, canvas: WorldCanvas) -> void:
 	viewport.size = Vector2i(176, 132)

@@ -1,7 +1,12 @@
 class_name TerrainAtlas
 extends RefCounted
 
-const SOURCE_PATH := "res://assets/textures/structure.png"
+enum Channel { DIFFUSE, NORMAL, SPECULAR }
+const SOURCES: Array[Texture2D] = [
+	preload("res://assets/textures/structure.png"),
+	preload("res://assets/textures/structure_normal.png"),
+	preload("res://assets/textures/structure_specular.png"),
+]
 const TEX_COUNT := 22
 const SRC_COLS := 10
 const SRC_TILE := 32
@@ -13,18 +18,12 @@ const SUBS_PER_TEXTURE := SRC_TILE / QUAD_SRC
 const WATER_BODY_MATERIAL := 21
 const WATER_SURFACE_MATERIAL := 22
 
-static var _src_cache: Image
-static var _brick_cache: Dictionary = {}
+static var _src_cache: Dictionary[int, Image] = {}
+static var _brick_cache: Dictionary[Vector3i, Image] = {}
 
 static func clear_cache() -> void:
-	_src_cache = null
+	_src_cache.clear()
 	_brick_cache.clear()
-
-static func source_image() -> Image:
-	if _src_cache == null:
-		var tex: Texture2D = load(SOURCE_PATH)
-		_src_cache = tex.get_image()
-	return _src_cache
 
 static func background_image(map: Dictionary, layer: int) -> Image:
 	var bytes: PackedByteArray = map.layers[layer].to_byte_array()
@@ -60,48 +59,60 @@ static func tint_color(color: Color, tint: Vector4i) -> Color:
 		color.a * tint.w / 7.0)
 	return Color.hex(adjusted.to_rgba32())
 
-static func _colored_brick(tile: int) -> Image:
+static func _brick(tile: int, channel: Channel) -> Image:
 	if tile == 0:
 		return Image.create_empty(SRC_TILE, SRC_TILE, false, Image.FORMAT_RGBA8)
-	var image := source_image().get_region(source_rect(CyrmMap.tile_material(tile) - 1))
+	if not _src_cache.has(channel):
+		var source := SOURCES[channel].get_image()
+		source.convert(Image.FORMAT_RGBA8)
+		_src_cache[channel] = source
+	var image := _src_cache[channel].get_region(source_rect(CyrmMap.tile_material(tile) - 1))
 	var tint := CyrmMap.tile_tint(tile)
-	if tint != CyrmMap.NEUTRAL_TINT:
+	if channel == Channel.DIFFUSE and tint != CyrmMap.NEUTRAL_TINT:
 		for y in SRC_TILE:
 			for x in SRC_TILE:
 				image.set_pixel(x, y, tint_color(image.get_pixel(x, y), tint))
 	return image
 
-static func build_atlas_image(rows: Dictionary) -> Image:
+static func _atlas_channel(rows: Dictionary, channel: Channel) -> Image:
 	var atlas := _atlas_image(QUAD_TILE, rows.size())
 	for desc in rows:
-		var brick := _colored_brick(desc)
+		var brick := _brick(desc, channel)
+		brick.resize(SUBS_PER_TEXTURE * QUAD_TILE, SUBS_PER_TEXTURE * QUAD_TILE, Image.INTERPOLATE_NEAREST)
 		for quad in QUAD_COLS:
-			var origin := Vector2i(quad % SUBS_PER_TEXTURE, quad / SUBS_PER_TEXTURE) * QUAD_SRC
-			var q := brick.get_region(Rect2i(origin, Vector2i.ONE * QUAD_SRC))
-			q.resize(QUAD_TILE, QUAD_TILE, Image.INTERPOLATE_NEAREST)
-			atlas.blit_rect(q, Rect2i(Vector2i.ZERO, q.get_size()), atlas_coords(rows[desc], quad) * QUAD_TILE)
+			var origin := Vector2i(quad % SUBS_PER_TEXTURE, quad / SUBS_PER_TEXTURE) * QUAD_TILE
+			atlas.blit_rect(brick, Rect2i(origin, Vector2i.ONE * QUAD_TILE), atlas_coords(rows[desc], quad) * QUAD_TILE)
 	return atlas
 
-static func make_wall_tileset(rows: Dictionary) -> TileSet:
-	return _tileset(build_atlas_image(rows), QUAD_TILE, rows.size())
+static func _surface(diffuse: Image, normal: Image, specular: Image) -> CanvasTexture:
+	var surface := CanvasTexture.new()
+	surface.diffuse_texture = ImageTexture.create_from_image(diffuse)
+	surface.normal_texture = ImageTexture.create_from_image(normal)
+	surface.specular_texture = ImageTexture.create_from_image(specular)
+	surface.specular_shininess = 0.6
+	return surface
 
-static func _tileset(image: Image, tile: int, groups: int) -> TileSet:
+static func make_wall_tileset(rows: Dictionary) -> TileSet:
 	var tile_set := TileSet.new()
-	tile_set.tile_size = Vector2i.ONE * tile
+	tile_set.tile_size = Vector2i.ONE * QUAD_TILE
 	var atlas := TileSetAtlasSource.new()
 	atlas.texture_region_size = tile_set.tile_size
-	atlas.texture = ImageTexture.create_from_image(image)
+	atlas.texture = _surface(_atlas_channel(rows, Channel.DIFFUSE), _atlas_channel(rows, Channel.NORMAL),
+			_atlas_channel(rows, Channel.SPECULAR))
 	tile_set.add_source(atlas)
-	for group in groups:
+	for group in rows.size():
 		for variant in QUAD_COLS:
 			atlas.create_tile(atlas_coords(group, variant))
 	return tile_set
 
-static func tile_image(ts: int, tile: int) -> Image:
-	var key := Vector2i(ts, tile)
+static func tile_image(ts: int, tile: int, channel := Channel.DIFFUSE) -> Image:
+	var key := Vector3i(ts, tile if channel == Channel.DIFFUSE else CyrmMap.tile_material(tile), channel)
 	if _brick_cache.has(key):
 		return _brick_cache[key]
-	var img := _colored_brick(tile)
+	var img := _brick(tile, channel)
 	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
 	_brick_cache[key] = img
 	return img
+
+static func tile_surface(ts: int, tile: int) -> CanvasTexture:
+	return _surface(tile_image(ts, tile), tile_image(ts, tile, Channel.NORMAL), tile_image(ts, tile, Channel.SPECULAR))

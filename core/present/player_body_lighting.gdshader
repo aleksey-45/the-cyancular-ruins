@@ -24,4 +24,9 @@ void light() {
 		float energy = LIGHT_IS_DIRECTIONAL ? 1.0 : LIGHT_ENERGY;
 		LIGHT = vec4(COLOR.rgb * LIGHT_COLOR.rgb * energy * facing, LIGHT_COLOR.a);
 	}
+	// 漫反射保留角色的明暗分档，高光使用 Godot 采样的镜面颜色与光泽度。
+	vec3 halfway = normalize(normalize(LIGHT_DIRECTION) + vec3(0.0, 0.0, 1.0));
+	float exponent = exp2(15.0 * SPECULAR_SHININESS.a - 1.0);
+	float highlight = pow(max(dot(NORMAL, halfway), 0.0), exponent);
+	LIGHT.rgb += SPECULAR_SHININESS.rgb * LIGHT_COLOR.rgb * LIGHT_ENERGY * highlight;
 }

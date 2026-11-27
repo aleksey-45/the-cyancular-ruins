@@ -1,7 +1,7 @@
 [gd_resource type="Resource" script_class="EnemyType" format=3 uid="uid://bymb8tqfewfrx"]
 
 [ext_resource type="Script" path="res://core/config/enemy_type.gd" id="type"]
-[ext_resource type="Texture2D" uid="uid://dmgthts2jye4q" path="res://assets/textures/black_bird.png" id="1_76tcf"]
+[ext_resource type="Texture2D" path="res://assets/textures/black_bird_surface.tres" id="1_76tcf"]
 [ext_resource type="Script" uid="uid://7x5i7fwoame7" path="res://scenes/enemies/enemy_black_bird.gd" id="1_bb"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_hfraj"]

@@ -110,6 +110,6 @@ func _add_water(rows: Dictionary) -> void:
 		batch.z_index = 5
 		batch.material = _water_material
 		batch.set_instance_shader_parameter("wave", true)
-		var image := TerrainAtlas.tile_image(ATLAS_SIDE * SUB, CyrmMap.tile_value(TerrainAtlas.WATER_SURFACE_MATERIAL, tint))
-		batch.setup(groups[tint], ImageTexture.create_from_image(image), SUB)
+		var tile := CyrmMap.tile_value(TerrainAtlas.WATER_SURFACE_MATERIAL, tint)
+		batch.setup(groups[tint], TerrainAtlas.tile_surface(ATLAS_SIDE * SUB, tile), SUB)
 		add_child(batch)

@@ -40,7 +40,7 @@ func present(now: float, anchor: Vector2, canvas: WorldCanvas, size: Vector2) ->
 		var pose: Transform2D = row[2]
 		pose.origin = ToroidalGrid.anchor_to_nearest(pose.origin, anchor, size)
 		var image: AtlasTexture = row[1]
-		canvas.sprite(image.atlas, image.region, pose, color, row[4])
+		canvas.sprite(WorldCanvas.diffuse(image.atlas), image.region, pose, color, row[4])
 
 
 func clear() -> void:

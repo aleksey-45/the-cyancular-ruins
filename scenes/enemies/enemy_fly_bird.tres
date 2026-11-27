@@ -1,7 +1,7 @@
 [gd_resource type="Resource" script_class="EnemyType" format=3 uid="uid://b332erg3p61ae"]
 
 [ext_resource type="Script" path="res://core/config/enemy_type.gd" id="type"]
-[ext_resource type="Texture2D" uid="uid://dhps2onsxrq72" path="res://assets/textures/fly_bird.png" id="1_jclwe"]
+[ext_resource type="Texture2D" path="res://assets/textures/fly_bird_surface.tres" id="1_jclwe"]
 [ext_resource type="Script" uid="uid://d3dyh06lmyjkr" path="res://scenes/enemies/enemy_fly_bird.gd" id="2_script"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_pc5nu"]

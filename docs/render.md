@@ -24,6 +24,14 @@
 
 主菜单背景使用 `newfactory` 的场景层。脚本更新视野中心与旋转角度，着色器根据子格索引采样瓦片纹理，并应用鱼眼畸变、模糊和色差。[主菜单背景](../core/present/menu_background.gd) · [菜单着色器](../core/present/menu_fisheye.gdshader)
 
+### 受光材质
+
+玩家、手持与掉落武器、三种鸟、地形和水面使用 Godot 的 `CanvasTexture`。底色、法线和镜面图共用帧矩形。法线图用切线空间的 X+、Y+、Z+ 约定。镜面图的 RGB 控制反光颜色与强度，Alpha 控制光泽度，值越大亮斑越窄。各纹理的 `specular_shininess` 取 0.6。玩家沿用原有法线和分档明暗，在同一着色器内读取 Godot 采样的镜面参数。[玩家材质](../assets/textures/player_canvas_texture.tres) · [玩家着色器](../core/present/player_body_lighting.gdshader) · [Godot 镜面光计算](https://github.com/godotengine/godot/blob/4.7.1-stable/servers/rendering/renderer_rd/shaders/canvas.glsl#L432-L448)
+
+枪管和铁链的高光较强且集中，握把、梯子和树干的反光较弱。鸟的喙和爪与羽毛使用不同的光泽。残影、发光叠层和乌鸫的受击剪影使用原画的底色和透明度。地形按同一套子格坐标拼接三张图，地图调色只作用于底色。水面在采样的法线上叠加与波形同步的倾斜，水纹、透明度与回溯效果由水面着色器处理。[武器材质](../assets/textures/weapons_surface.tres) · [地形图集](../core/present/terrain_atlas.gd) · [水面着色器](../core/present/water_current.gdshader)
+
+修改原画后，可以在仓库根目录运行 `python tools/bake_surface_maps.py` 重建配套纹理。工具使用 NumPy 与 Pillow，根据原画轮廓、像素色阶、枪托握把的遮罩及地形材质生成法线和镜面图。修改玩家的姿势或眼睛位置时，另运行 `python tools/bake_eye_light.py` 更新眼灯挂点和烘焙底色。[材质贴图生成](../tools/bake_surface_maps.py) · [玩家眼灯烘焙](../tools/bake_eye_light.py)
+
 ## 单人片头
 
 正式单人对局中，`MatchView` 在渲染前记录战场的绘制项、摄像机位置、地形和后期参数。渲染帧率上限为 60 FPS，缓存最多保留 300 帧。超出容量时，根据倒放时间轴上的采样间隔删减中间帧，保留首尾画面。[画面采集](../core/present/match_view.gd) · [抽帧与存档](../core/present/run_intro.gd)
