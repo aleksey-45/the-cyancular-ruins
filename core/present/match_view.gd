@@ -60,10 +60,12 @@ func _mount_battlefield(map: Dictionary) -> void:
 	var margin := Vector2(_viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin
 	_mount_backgrounds(_viewport, map, margin)
 	terrain_view.install(map, margin)
+	_canvas.lamps.install(map, margin)
+	terrain_view.wall_changed.connect(_canvas.lamps.set_support)
 
 func mount_intro(intro: RunIntro) -> void:
 	_mount_battlefield(intro.map)
-	_intro_walls = intro.walls
+	_intro_walls.resize(intro.walls.size())
 	_hud.hide()
 	feedback.hide()
 	feedback.set_process(false)

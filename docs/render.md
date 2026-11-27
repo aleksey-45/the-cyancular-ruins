@@ -18,7 +18,7 @@
 
 `TerrainAtlas` 根据纹理和色彩参数生成墙体与水体图集。`TerrainView` 绘制地图的场景层，在环绕边界绘制平移副本，覆盖半个摄像机视野再加 512 个世界像素，并按子格更新被破坏或恢复的墙体。水面按色彩参数分组，顶点着色器随关卡时间改变水波形状。[地形图集](../core/present/terrain_atlas.gd) · [地形视图](../core/present/terrain_view.gd) · [水面](../core/present/water_surface_batch.gd)
 
-`WorldCanvas` 更新环境光、方向光和玩家眼灯。Mobile 渲染器中，每个 `CanvasItem` 最多接收 15 个点光源。角色数超过 15 时，每个玩家身体单独使用一个画布节点绘制，缩小引擎为单个节点查找光源的范围。[世界画布](../core/present/world_canvas.gd) · [昼夜与玩家光照](world.md) · [Godot 4.7.1 光源计数](https://github.com/godotengine/godot/blob/4.7.1-stable/servers/rendering/renderer_rd/renderer_canvas_render_rd.cpp#L2165-L2182)
+`WorldCanvas` 更新环境光、方向光、玩家眼灯和路灯。Mobile 渲染器中，每个 `CanvasItem` 最多接收 15 个点光源。当玩家数与视野内点亮的路灯副本数合计超过 15，多名玩家的身体分开绘制，引擎按每个身体的位置筛选光源。[世界画布](../core/present/world_canvas.gd) · [昼夜与玩家光照](world.md) · [Godot 4.7.1 光源计数](https://github.com/godotengine/godot/blob/4.7.1-stable/servers/rendering/renderer_rd/renderer_canvas_render_rd.cpp#L2165-L2182)
 
 对局默认显示 1920×1440 个世界像素的矩形视野，画面随窗口等比缩放。按 `Delete` 切换鱼眼畸变。后期处理采样世界视口纹理，添加受击红色闪光、低生命值暗角和时间技能滤镜。HUD 绘制在这层效果之上，文字和图标保持清晰。[后期处理](../core/present/post_process.gd)
 
@@ -31,6 +31,12 @@
 枪管和铁链的高光较强且集中，握把、梯子和树干的反光较弱。鸟的喙和爪与羽毛使用不同的光泽。残影、发光叠层和乌鸫的受击剪影使用原画的底色和透明度。地形按同一套子格坐标拼接三张图，地图调色只作用于底色。水面在采样的法线上叠加与波形同步的倾斜，水纹、透明度与回溯效果由水面着色器处理。[武器材质](../assets/textures/weapons_surface.tres) · [地形图集](../core/present/terrain_atlas.gd) · [水面着色器](../core/present/water_current.gdshader)
 
 修改原画后，可以在仓库根目录运行 `python tools/bake_surface_maps.py` 重建配套纹理。工具使用 NumPy 与 Pillow，根据原画轮廓、像素色阶、枪托握把的遮罩及地形材质生成法线和镜面图。修改玩家的姿势或眼睛位置时，另运行 `python tools/bake_eye_light.py` 更新眼灯挂点和烘焙底色。[材质贴图生成](../tools/bake_surface_maps.py) · [玩家眼灯烘焙](../tools/bake_eye_light.py)
+
+### 路灯照明
+
+灯具宽 16、高 80 世界像素。灯杆和玻璃使用带法线和高光的 `CanvasTexture`，灯芯单独绘制。暖白光为 `#FFD69C`，冷青光为 `#86D9E8`。原生 `PointLight2D` 高度为 32，满亮能量为 0.9。灯芯亮度和点光能量随天色连续变化，夜间系数为 `1 - smoothstep(0.22, 0.64, 环境色亮度)`。[灯具场景](../core/present/street_lamp.tscn) · [昼夜色带采样](../core/present/daylight.gd)
+
+路灯照亮地形、水面、角色、装备和灯杆。天空、视差背景、名牌和 HUD 保持各自的颜色。路灯的光斑半径为 160 世界像素，小地图取最短边长的一半作为上限。地图边缘按灯杆与光斑的联合范围绘制副本，屏外灯也能照进视野。灯光按距离衰减，可以照到隔墙的表面。[路灯与环面副本](../core/present/street_lamps.gd) · [地图点位和支座](world.md#路灯)
 
 ## 单人片头
 

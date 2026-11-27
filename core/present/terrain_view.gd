@@ -1,6 +1,8 @@
 class_name TerrainView
 extends Node2D
 
+signal wall_changed(index: int, alive: bool)
+
 const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
 
 const SUB := CyrmMap.CELL_SIZE
@@ -27,6 +29,7 @@ func install(map: Dictionary, margin: Vector2) -> void:
 		else:
 			_wall_rows[desc] = _wall_rows.size()
 	for layer in [_wall, _water]:
+		layer.light_mask |= StreetLamps.RECEIVER_MASK
 		layer.collision_enabled = false
 		layer.navigation_enabled = false
 		layer.occlusion_enabled = false
@@ -46,7 +49,7 @@ func install(map: Dictionary, margin: Vector2) -> void:
 
 func patch(changes: Dictionary) -> void:
 	for index: int in changes:
-		_paint_wall(index, changes[index])
+		_change_wall(index, changes[index])
 
 func show_walls(previous: PackedByteArray, current: PackedByteArray) -> void:
 	if previous == current:
@@ -58,7 +61,11 @@ func show_walls(previous: PackedByteArray, current: PackedByteArray) -> void:
 		for bit in 8:
 			var flag := 1 << bit
 			if changed & flag:
-				_paint_wall(i * 8 + bit, not (current[i] & flag))
+				_change_wall(i * 8 + bit, not (current[i] & flag))
+
+func _change_wall(index: int, alive: bool) -> void:
+	_paint_wall(index, alive)
+	wall_changed.emit(index, alive)
 
 func present(elapsed: float, coverage: float) -> void:
 	_wall.material = _wall_film if coverage > 0.0 else null
@@ -107,6 +114,7 @@ func _add_water(rows: Dictionary) -> void:
 					_water.set_cell(at, 0, atlas)
 	for tint: Vector4i in groups:
 		var batch := WaterSurfaceBatch.new()
+		batch.light_mask |= StreetLamps.RECEIVER_MASK
 		batch.z_index = 5
 		batch.material = _water_material
 		batch.set_instance_shader_parameter("wave", true)

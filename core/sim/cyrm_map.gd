@@ -6,6 +6,7 @@ const BACK := 2
 const FIRST_BACKGROUND := 3
 const LAYER_COUNT := FIRST_BACKGROUND + 4
 const CELL_SIZE := 16
+const LAMP_HEIGHT := 5
 const MAX_SIZE := Vector2i(1600, 1200)
 const NEUTRAL_TINT := Vector4i(4, 4, 4, 7)
 
@@ -85,6 +86,25 @@ static func first_point_id(map: Dictionary, kind: String) -> int:
 	for id: int in map.points:
 		if map.points[id].kind == kind: return id
 	return -1
+
+static func lamp_support(cell: Vector2i, size: Vector2i) -> int:
+	return ((cell.y + 1) % size.y) * size.x + cell.x
+
+static func lamp_problem(map: Dictionary, cell: Vector2i, own_id := -1) -> String:
+	var size: Vector2i = map.size
+	var scene: PackedInt32Array = map.layers[SCENE]
+	if not TileDefs.is_blocked(tile_material(scene[lamp_support(cell, size)])):
+		return "灯脚下方需要实心墙"
+	for dy in LAMP_HEIGHT:
+		if scene[posmod(cell.y - dy, size.y) * size.x + cell.x] != 0:
+			return "灯杆需要连续五格空气"
+	for id: int in map.points:
+		var other: Dictionary = map.points[id]
+		if id == own_id or other.kind != "lamp" or other.cell.x != cell.x: continue
+		var dy := absi(cell.y - other.cell.y)
+		if mini(dy, size.y - dy) < LAMP_HEIGHT:
+			return "灯杆与另一盏路灯重叠"
+	return ""
 
 static func to_bytes(map: Dictionary) -> PackedByteArray:
 	return CyrmStorage.pack(var_to_bytes(map))

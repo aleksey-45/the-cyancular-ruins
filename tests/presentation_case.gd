@@ -5,8 +5,10 @@ func run(tree: SceneTree) -> void:
 	_bird_materials(tree)
 	_damage_numbers(tree)
 	_daylight(tree)
+	_street_lamps(tree)
 	if DisplayServer.get_name() != "headless":
 		await _daylight_render(tree)
+		await _lamp_render(tree)
 		await _pickup_bindings(tree)
 	_camera(tree)
 	_result_panel(tree)
@@ -14,6 +16,90 @@ func run(tree: SceneTree) -> void:
 	_detached_match()
 	await _solo_scene(tree)
 	await _loading_failure(tree)
+
+func _street_lamps(tree: SceneTree) -> void:
+	var map := CyrmMap.create(Vector2i(32, 16))
+	var wood := CyrmMap.tile_value(19)
+	CyrmMap.write_cells(map, CyrmMap.SCENE, [0, 2, wood, 20, 10, wood])
+	map.points[5] = {"kind": "lamp", "cell": Vector2i(0, 1), "tone": "warm"}
+	map.points[8] = {"kind": "lamp", "cell": Vector2i(20, 9), "tone": "cool"}
+	var intro := RunIntro.new(CyrmMap.from_bytes(CyrmMap.to_bytes(map)))
+	var support := CyrmMap.lamp_support(Vector2i(0, 1), map.size)
+	var view: MatchView = load("res://scenes/match_view.tscn").instantiate()
+	tree.root.add_child(view)
+	var canvas := view._canvas
+	for minute: float in [Daylight.NOON, 0.0]:
+		canvas.set_daylight(minute)
+		intro.patch_walls({support: minute == Daylight.NOON})
+		intro.append([float(intro.frames.size()), intro.walls, Vector2.ZERO, Vector2.ZERO,
+				view._screen.display_state(), canvas.display_state(intro.texture_index)])
+	view.mount_intro(intro)
+	var lamps := canvas.lamps
+	var stand: Node2D = lamps._supports[support]
+	var bulbs: Array[Vector2] = []
+	for light: PointLight2D in stand.get_children():
+		bulbs.append(light.position)
+	expect(lamps.radius == 128 and bulbs.has(Vector2(8, -32)) and bulbs.has(Vector2(520, 224)),
+			"small toroidal maps cap the radius and carry housing and bulb across both seams")
+	var corner := Rect2(0, 0, 32, 48)
+	canvas.set_daylight(Daylight.NOON)
+	expect(lamps.lit_count(corner) == 0 and not stand.get_child(0).enabled, "noon leaves the housing visible with its light off")
+	canvas.set_daylight(0)
+	expect(lamps.lit_count(corner) == 1 and lamps.lit_count(Rect2(480, 232, 25, 16)) == 1,
+			"each edge receives one light even with the bulb outside the view")
+	var light: PointLight2D = stand.get_child(0)
+	expect(light.color == StreetLamps.COLORS.warm and light.height == 32 and is_equal_approx(light.energy, 0.9),
+			"midnight uses the warm lamp's full energy at the authored height")
+	canvas.set_daylight(350)
+	expect(lamps.night > 0 and lamps.night < 1, "the filament and light fade continuously at dawn")
+	canvas.set_daylight(0)
+	canvas.begin(15)
+	expect(canvas._split_player_batches, "lit street lamps share the per-item light budget with eye lights")
+	canvas.set_daylight(Daylight.NOON)
+	canvas.begin(15)
+	expect(not canvas._split_player_batches, "unlit lamps do not split a 15-player batch")
+	view.show_intro_frame(intro.frames[1], [])
+	expect(not stand.visible and lamps.lit_count(corner) == 0, "the first captured frame can start with a destroyed support")
+	view.show_intro_frame(intro.frames[0], [])
+	expect(stand.visible and not light.enabled, "rewinding restores the fixture under the recorded daylight")
+	view.terrain_view.patch({support: false})
+	canvas.set_daylight(0.0)
+	expect(not stand.visible and lamps._supports[CyrmMap.lamp_support(Vector2i(20, 9), map.size)].visible,
+			"a live terrain patch hides only its own stand, including every periodic copy")
+	view.terrain_view.patch({support: true})
+	expect(stand.visible and light.enabled, "the same support update restores the nighttime lamp on reset")
+	view.free()
+
+func _lamp_render(tree: SceneTree) -> void:
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(220, 160)
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	tree.root.add_child(viewport)
+	var map := CyrmMap.create(Vector2i(40, 24))
+	for x in 20: map.layers[CyrmMap.SCENE][8 * 40 + x] = CyrmMap.tile_value(7)
+	map.points[0] = {"kind": "lamp", "cell": Vector2i(4, 7), "tone": "warm"}
+	var ground := TerrainView.new()
+	viewport.add_child(ground)
+	ground.install(map, Vector2.ZERO)
+	var canvas := canvas_for(viewport)
+	canvas.lamps.install(map)
+	canvas.set_daylight(0.0)
+	await RenderingServer.frame_post_draw
+	var warm := viewport.get_texture().get_image()
+	map.points[0].tone = "cool"
+	canvas.lamps.install(map)
+	await RenderingServer.frame_post_draw
+	var cool := viewport.get_texture().get_image()
+	canvas.lamps.set_support(8 * 40 + 4, false)
+	await RenderingServer.frame_post_draw
+	var off := viewport.get_texture().get_image()
+	var base := off.get_pixel(88, 132)
+	expect(warm.get_pixel(72, 64).r > 0.9 and cool.get_pixel(72, 64).b > cool.get_pixel(72, 64).r,
+			"the unshaded filament takes the tone of the light")
+	expect(warm.get_pixel(88, 132).r > base.r + 0.03 and cool.get_pixel(88, 132).b > base.b + 0.03
+			and warm.get_pixel(88, 132).r > cool.get_pixel(88, 132).r, "both tones illuminate the actual normal-mapped tile layer")
+	expect(warm.get_pixel(110, 80) == off.get_pixel(110, 80), "air retains the sky color inside the light radius")
+	viewport.free()
 
 func _bird_materials(tree: SceneTree) -> void:
 	var canvas := canvas_for(tree.root)

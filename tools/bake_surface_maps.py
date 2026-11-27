@@ -110,6 +110,18 @@ def birds():
         save(name, "specular", spec)
 
 
+def street_lamp():
+    rgba = pixels("street_lamp")
+    solid = rgba[:, :, 3] > 0
+    tone = luminance(rgba)
+    y, x = np.indices(solid.shape)
+    glass = (y >= 10) & (y <= 21) & (x >= 5) & (x <= 10)
+    height = 0.9 * bevel(solid) + solid * (1.8 * tone + 0.6 * glass)
+    save("street_lamp", "normal", normals(height, solid))
+    save("street_lamp", "specular", specular(solid, np.where(glass, 92, 30 + 54 * tone),
+                                             np.where(glass, 210, 140)))
+
+
 def terrain():
     rgba = pixels("structure")
     normal = np.full((*rgba.shape[:2], 3), (128, 128, 255), dtype=np.uint8)
@@ -147,6 +159,7 @@ def terrain():
 if __name__ == "__main__":
     weapons()
     birds()
+    street_lamp()
     terrain()
     player = pixels("player")
     eyes = (player == 255).all(axis=2)

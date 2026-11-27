@@ -11,6 +11,8 @@ var overscan_y := 1.0
 var directional_light := Vector3(0, -1, 1)
 ## RGB 记录光源颜色，Alpha 控制日光或月光在地平线附近的淡入淡出。
 var directional_color: Color
+var night: float:
+	get: return 1.0 - smoothstep(0.22, 0.64, color.get_luminance())
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE

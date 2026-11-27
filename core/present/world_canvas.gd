@@ -15,6 +15,7 @@ class SpriteBatch extends Node2D:
 	var rows: Array[Array] = []
 
 var _sky := Daylight.new()
+var lamps := StreetLamps.new()
 var _day_minute: float
 var _ambient := CanvasModulate.new()
 var _directional := DirectionalLight2D.new()
@@ -34,6 +35,7 @@ var overlay_layer := Node2D.new()
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	add_child(lamps)
 	var glow := CanvasItemMaterial.new()
 	glow.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	_materials = [null, _player_body_material, glow, _shader_material(WHITE_MASK)]
@@ -59,6 +61,7 @@ func _ready() -> void:
 func set_daylight(minute: float) -> void:
 	_day_minute = minute
 	_ambient.color = _sky.set_minute(minute)
+	lamps.night = _sky.night
 	var source := _sky.directional_light
 	var color := _sky.directional_color
 	_directional.rotation = Vector2.DOWN.angle_to(-Vector2(source.x, source.y))
@@ -83,6 +86,7 @@ func _batch(style: int, separate: bool) -> SpriteBatch:
 	var batch := _batches[_batch_count]
 	batch.style = style
 	batch.material = _materials[style]
+	batch.light_mask = 1 | StreetLamps.RECEIVER_MASK if style in [Pass.NORMAL, Pass.PLAYER_BODY] else 1
 	_batch_count += 1
 	return batch
 
@@ -90,7 +94,8 @@ func begin(actor_count: int) -> void:
 	for batch in _batches:
 		batch.rows.clear()
 	_batch_count = 0
-	_split_player_batches = actor_count > MAX_POINT_LIGHTS_PER_ITEM
+	var view := get_canvas_transform().affine_inverse() * get_viewport_rect()
+	_split_player_batches = actor_count > 1 and actor_count + lamps.lit_count(view) > MAX_POINT_LIGHTS_PER_ITEM
 	_eye_light_count = 0
 	_foreground.rows.clear()
 	for rows: Array in _labels:
@@ -129,7 +134,7 @@ func eye_light(pose: Transform2D) -> void:
 		_eye_lights.append(node)
 	var light := _eye_lights[_eye_light_count]
 	_eye_light_count += 1
-	light.energy = lerpf(0.75, 0.04, smoothstep(0.22, 0.64, _ambient.color.get_luminance()))
+	light.energy = lerpf(0.04, 0.75, _sky.night)
 	light.transform = pose
 	light.show()
 
