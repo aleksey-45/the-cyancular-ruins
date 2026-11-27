@@ -301,8 +301,14 @@ func _load_match(tree: SceneTree) -> void:
 	PvpSession.begin_match(payload, payload["map"])
 	var terrain := host.world.terrain
 	var cell := _wall(host.world.spec.map)
-	var cells := {cell: terrain.get_hp(cell) - 1}
-	terrain.apply_at(terrain.version, cells)
+	var lamp: Dictionary = payload.map.points.values().filter(func(point: Dictionary) -> bool:
+		return point.kind == "lamp" and TileDefs.explosion_destroyable(terrain.sub_texture(point.cell + Vector2i.DOWN))).front()
+	var support: Vector2i = lamp.cell + Vector2i.DOWN
+	var before := terrain.version
+	terrain.apply_at(before, {cell: terrain.get_hp(cell) - 1})
+	terrain.damage_beam(support, terrain.get_hp(support))
+	terrain.commit()
+	var cells := terrain.changes_since(before)
 	NetSession._on_event(1, NetEvent.Kind.TERRAIN, {"version": terrain.version, "cells": cells})
 	payload = _baseline(host)
 	NetSession._on_event(1, NetEvent.Kind.BASELINE, payload)
@@ -352,6 +358,8 @@ func _load_match(tree: SceneTree) -> void:
 	await tree.process_frame
 	expect(client.session.latest_authority == newest and client._presenter.frame.actors.size() == 2,
 			"the inbox is consumed by the fixed-step driver and both actors reach the view")
+	var stand: Node2D = client._view._canvas.lamps._supports[terrain.sub_index(support)]
+	expect(not stand.visible, "a client joining on a fresh baseline sees the broken lamp support")
 	var world := client.session.world
 	host.world.rules.round_number += 1
 	host.world.rules.phase = MatchRules.Phase.WAITING
@@ -362,6 +370,8 @@ func _load_match(tree: SceneTree) -> void:
 	expect(client.session.world == world and client.session.latest_authority == next_round["frame"]
 			and client.terrain.get_modified().is_empty() and client.controls.frozen,
 			"the round baseline resets terrain and input on the mounted match")
+	client._process(ActorStep.DT)
+	expect(stand.visible, "the next round restores the street lamp with its support")
 	client.free()
 	NetSession.close()
 	host.world.close()
