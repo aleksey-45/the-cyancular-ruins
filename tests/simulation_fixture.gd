@@ -36,7 +36,8 @@ func _fires(actions: Array) -> Array:
 
 class ActorDisplay extends Node:
 	var _frame: MatchFrame
-	var _world := WorldView.new()
+	var _world: WorldView
+	var drawing: Dictionary
 	var presenter: MatchPresenter
 
 func _display(parent: TestWorld, actor: Player) -> ActorDisplay:
@@ -44,7 +45,7 @@ func _display(parent: TestWorld, actor: Player) -> ActorDisplay:
 	var spec := WorldSpec.solo(parent.document, Vector2i.ZERO, [WeaponType.RIFLE], 0)
 	display.presenter = MatchPresenter.new(spec, parent.terrain, actor.role, null)
 	display._frame = display.presenter.frame
-	display._world.bind(canvas_for(parent), parent.terrain.map_size)
+	display._world = display.presenter.world
 	return display
 
 func _draw_actor(display: ActorDisplay, actor: Player) -> void:
@@ -60,7 +61,7 @@ func _draw_actor(display: ActorDisplay, actor: Player) -> void:
 	for cue: Array in frame.cues:
 		if cue[0] == "motion":
 			display._world.motion(cue[1], cue[2], frame.now, cue[3])
-	display._world.present(frame)
+	display.drawing = display._world.build(frame)
 
 func _record_time(sim: CombatSimulator, actor: Player, delta := 1.0 / TCFG.SNAP_HZ) -> void:
 	sim.time_field.history.record(delta, sim.tick, sim.time_field._sample.bind(sim, actor))

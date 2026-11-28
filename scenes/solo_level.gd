@@ -6,16 +6,16 @@ const INTRO_VIEW := preload("res://scenes/match_view.tscn")
 var session: MatchHost
 var spec: WorldSpec
 var preview_minute := -1.0
-var _intro_enabled := false
-var _opening := false
+var _recording_path: String
 var _skip_intro := false
-var _replay: MatchView
+var _intro: RunIntro
+var _saved_death := false
 
-static func create(document: Dictionary, spawn: Vector2i, weapons: Array[int], with_intro := false) -> SoloLevel:
+static func create(document: Dictionary, spawn: Vector2i, weapons: Array[int], recording_path := RunIntro.PATH) -> SoloLevel:
 	var scene: PackedScene = load("res://scenes/level_0.tscn")
 	var level: SoloLevel = scene.instantiate()
 	level.spec = WorldSpec.solo(document, spawn, weapons, randi())
-	level._intro_enabled = with_intro and DisplayServer.get_name() != "headless"
+	level._recording_path = recording_path
 	return level
 
 func _enter_tree() -> void:
@@ -23,108 +23,113 @@ func _enter_tree() -> void:
 	_bind(session.world, spec.roles[0])
 
 func _physics_process(delta: float) -> void:
-	_step(_sample_input(delta))
+	if not get_tree().paused:
+		_step(_sample_input(delta))
 
 func _step(input: Array) -> void:
 	session.fixed_step({role: input})
-	_sampler.accept_local(world.sample())
+	_presenter.accept({"current": world.sample()})
 
 func _ready() -> void:
 	_mount_session()
-	_reset_sampler()
-	_sampler.accept_local(world.sample())
 	_view.pause.toggled.connect(_set_pause)
-	_presenter.preview_minute = preview_minute
-	if _intro_enabled:
-		_opening = true
-		set_physics_process(false)
-		set_process(false)
+	_begin_run(false)
+
+func _process(delta: float) -> void:
+	var paused := get_tree().paused
+	var frame := _present(0.0 if paused else delta, delta)
+	if paused: return
+	var downed := _presenter.frame.downed
+	if _intro and (not downed or not _saved_death):
+		_intro.append(frame)
+		_saved_death = downed
+		if downed:
+			_intro.save(_recording_path)
+	# 在画出并保存倒地帧后响应重开，包括同一帧里按下的 R。
+	if downed and Input.is_action_just_pressed(&"R"):
+		Input.action_release(&"R")
+		_begin_run(true)
+
+func _input(event: InputEvent) -> void:
+	get_viewport().set_input_as_handled()
+	if event.is_action_pressed(&"ui_cancel") or (event is InputEventKey
+			and event.physical_keycode == KEY_SPACE and event.pressed):
+		_skip_intro = true
+
+func _begin_run(restart: bool) -> void:
+	set_process_input(true)
+	set_physics_process(false)
+	set_process(false)
+	_intro = null
+	if not _recording_path.is_empty():
 		var loading := LoadingScreen.find(get_tree())
 		if loading != null and loading.is_loading():
 			await loading.tree_exited
-		_begin_attempt(false)
-
-func _input(event: InputEvent) -> void:
-	if _opening:
-		get_viewport().set_input_as_handled()
-		if _replay != null and (event.is_action_pressed(&"ui_cancel") or (event is InputEventKey
-				and event.physical_keycode == KEY_SPACE and event.pressed)):
-			_skip_intro = true
-		return
-	if not player.sim_downed or not event.is_action_pressed(&"R"):
-		return
-	get_viewport().set_input_as_handled()
-	Input.action_release(&"R")
-	if not _intro_enabled:
-		restart_single()
-		return
-	_opening = true
-	set_physics_process(false)
-	# 当前帧先呈现倒地画面并存档。
-	await RenderingServer.frame_post_draw
-	set_process(false)
-	_view.end_intro_capture()
-	_begin_attempt(true)
-
-func _begin_attempt(retry: bool) -> void:
-	var intro := RunIntro.load_pending()
-	if intro != null:
-		await _play_intro(intro)
-	if retry:
-		restart_single()
-		_step(ActorInput.neutral())
-		_camera.reset_follow()
-	_view.begin_intro_capture(spec.map)
+		var previous := RunIntro.load_pending(_recording_path)
+		if previous:
+			await _play_intro(previous)
+			DirAccess.remove_absolute(_recording_path)
+	if restart:
+		controls = LocalInputSource.new()
+		session.enqueue(MatchWorld.Command.RESTART)
+		session.fixed_step({role: ActorInput.neutral()})
+	_start_presentation({"current": world.sample()})
+	_presenter.preview_minute = preview_minute
+	if not _recording_path.is_empty():
+		_intro = RunIntro.new(spec.map, _view.textures)
+		_saved_death = false
+		_intro.append(_present(0.0, 0.0))
+		await get_tree().process_frame
+		for action in InputMap.get_actions():
+			Input.action_release(action)
+	set_process_input(false)
 	set_process(true)
-	# 摄像机和画布先显示出生时的状态，下一帧再推进模拟。
-	await get_tree().process_frame
-	await RenderingServer.frame_post_draw
-	for action in InputMap.get_actions():
-		Input.action_release(action)
 	set_physics_process(true)
-	_opening = false
 
 func _play_intro(intro: RunIntro) -> void:
 	_view.set_battle_visible(false)
-	_replay = INTRO_VIEW.instantiate()
-	_replay.get_node("WorldViewport").world_2d = World2D.new()
-	add_child(_replay)
-	_replay.mount_intro(intro)
-	var textures := intro.load_textures()
+	var replay: MatchView = INTRO_VIEW.instantiate()
+	replay.name = "PreviousRun"
+	replay.get_node("WorldViewport").world_2d = World2D.new()
+	add_child(replay)
+	replay.mount(intro.map, WorldSpec.SOLO, true, false)
+	replay.textures = intro.textures
+	replay.pause.set_process_unhandled_input(false)
+	var hint := UiDesign.label("Esc / 空格 跳过", 28)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hint.add_theme_constant_override("outline_size", 6)
+	UiDesign.place(replay.feedback, hint, Rect2(-252, -70, 224, 44), Vector2.ONE)
 	_skip_intro = false
 	var start := Time.get_ticks_usec()
 	var elapsed := 0.0
 	var duration := intro.duration()
-	var shown := -1
+	var shown: DrawFrame
 	while not _skip_intro and elapsed < duration:
-		_replay.present_intro_effect(elapsed, duration)
-		var index := intro.frame_index(elapsed)
-		if index != shown:
-			_replay.show_intro_frame(intro.frames[index], textures)
-			shown = index
+		var fade := smoothstep(0.0, 0.1, elapsed) * smoothstep(0.0, 0.12, duration - elapsed)
+		replay.post.set_intro_rewind(elapsed, fade * lerpf(0.35, 1.0, elapsed / duration))
+		var frame := intro.frame_at(elapsed)
+		if frame != shown:
+			replay.draw_frame(frame)
+			shown = frame
 		await get_tree().process_frame
 		elapsed = (Time.get_ticks_usec() - start) / 1000000.0
-	remove_child(_replay)
-	_replay.queue_free()
-	_replay = null
+	remove_child(replay)
+	replay.queue_free()
 	_view.set_battle_visible(true)
-	DirAccess.remove_absolute(RunIntro.PATH)
 
 func _set_pause(open: bool) -> void:
-	if open:
-		_view.capture_intro_frame(true)
 	controls.frozen = open
 	get_tree().paused = open
 
+func _save_intro() -> void:
+	if _intro and not _saved_death:
+		_intro.save(_recording_path)
+
 func _leave_match() -> void:
-	_view.end_intro_capture(true)
+	_save_intro()
 	get_tree().paused = false
 	super()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		_view.end_intro_capture(true)
-
-func restart_single() -> void:
-	controls = LocalInputSource.new()
-	session.enqueue(MatchWorld.Command.RESTART)
+		_save_intro()

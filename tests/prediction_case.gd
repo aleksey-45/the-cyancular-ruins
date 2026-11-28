@@ -12,7 +12,9 @@ func run(tree: SceneTree) -> void:
 	_buffered_input()
 	_sample_bow_and_death()
 	_position_residual()
+	_presentation_history()
 	await _load_match(tree)
+	_live_after_down(tree)
 
 func _beta() -> MatchHost:
 	var host := arena(Mode, [1, 2], {}, RoomOptions.normalized(Mode, {"beta": true}))
@@ -241,13 +243,13 @@ func _sample_bow_and_death() -> void:
 	var presenter := MatchPresenter.new(world.spec, world.terrain, 1, world.personal_time.accounts[1])
 	var details := {"aim": Vector2.RIGHT, "walls": {}, "guide": PackedVector2Array(),
 		"drop": 0.0, "bounds": world.players[1].collision_rect()}
-	var shown := presenter.compose(sampler.sample(0.0, 1.0), 0.0, details["drop"], details["walls"])
+	var shown := presenter._compose(sampler.sample(0.0, 1.0), 0.0, details["drop"], details["walls"])
 	expect(not shown.downed and not shown.actors[0].downed and shown.health == world.players[1].sim_hp,
 			"speculative death does not change the local observed health or down pose")
 	expect(shown.actors[1].bow_draw >= 0.0 and shown.projectiles.is_empty(),
 			"before the remote release tick the arrow is still on the bow")
 	sampler.render_tick = float(world.tick)
-	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.01, details["drop"], details["walls"])
+	shown = presenter._compose(sampler.sample(0.0, 1.0), 0.01, details["drop"], details["walls"])
 	expect(shown.actors[1].bow_draw < 0.0 and shown.projectiles.size() == 1,
 			"the arrow flies and the bow clears on the same remote sample")
 	world.players[1].apply_hit_health(0)
@@ -255,15 +257,15 @@ func _sample_bow_and_death() -> void:
 	var confirmed := host.packet({})
 	var death := world.sample(1)
 	sampler.accept({"authority": confirmed, "previous": own, "current": death})
-	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.02, details["drop"], details["walls"])
+	shown = presenter._compose(sampler.sample(0.0, 1.0), 0.02, details["drop"], details["walls"])
 	expect(shown.downed and shown.actors[0].downed and shown.hit_ratio > 0.0, "confirmation starts the down pose and reaction")
-	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.03, details["drop"], details["walls"])
+	shown = presenter._compose(sampler.sample(0.0, 1.0), 0.03, details["drop"], details["walls"])
 	expect(shown.downed and shown.hit_ratio == 0.0, "the same authority state does not repeat a hit reaction")
 	var early_respawn := death.duplicate(true)
 	early_respawn["players"][1][Actor.LIFE] += 1
 	early_respawn["players"][1][Actor.POS] += Vector2(300, 0)
 	sampler.accept({"previous": death, "current": early_respawn})
-	shown = presenter.compose(sampler.sample(0.0, 1.0), 0.04, details["drop"], details["walls"])
+	shown = presenter._compose(sampler.sample(0.0, 1.0), 0.04, details["drop"], details["walls"])
 	expect(shown.downed and shown.focus == death["players"][1][Actor.POS],
 			"the previous life stays on screen until authority confirms the respawn")
 	host.world.close()
@@ -291,6 +293,45 @@ func _position_residual() -> void:
 	expect(half.is_equal_approx(Vector2(8, 20)), "new movement continues while the display residual decays")
 	expect(sampler.sample(0.05, 1.0)["focus"] == next, "the residual disappears in elapsed render time")
 	host.world.close()
+
+func _presentation_history() -> void:
+	var host := _beta()
+	var world := host.world
+	var presenter := MatchPresenter.new(world.spec, world.terrain, 1, world.time_account(1))
+	presenter.names = {1: "A", 2: "B"}
+	var id := ShotRules.shot_id(2, 1)
+	var bullet := world.combat.spawn_projectile(id, WeaponType.RIFLE, world.players[2], Vector2(300, 96), Vector2.ZERO)
+	var trajectories := Settings.pvp_show_trajectories
+	Settings.pvp_show_trajectories = true
+	var shown: DrawFrame
+	for tick in range(1, 4):
+		if tick == 3: world.players[1].spawn_at(Vector2i(5, 4))
+		bullet.position.x += 10.0
+		var packet := host.packet({})
+		packet.checkpoint.tick = tick
+		presenter.accept({"current": world.sample(1), "authority": packet})
+		presenter.sampler.render_tick = tick
+		var frame := presenter.advance(ActorStep.DT, ActorStep.DT, 1.0, 0.0)
+		if tick == 2: shown = frame
+	expect(presenter.world._paths[id].size() == 3 and shown.world.lines[0][0].size() == 2,
+			"a confirmed local respawn preserves the remote trajectory and the earlier recorded polyline")
+	Settings.pvp_show_trajectories = trajectories
+	var present_shot := func(serial: int, weapon: int) -> void:
+		var step := world.sample(1)
+		step.players[1][Actor.SHOT_SERIAL] = serial
+		step.players[1][Actor.SHOT_TYPE] = weapon
+		presenter.accept({"current": step})
+	present_shot.call(1, WeaponType.PISTOL)
+	present_shot.call(2, WeaponType.RIFLE)
+	presenter.advance(ActorStep.DT, ActorStep.DT, 1.0, 0.0)
+	var fires := presenter.frame.cues.filter(func(cue: Array) -> bool: return cue[0] == "fire")
+	expect(fires == [["fire", 1, WeaponType.PISTOL, true], ["fire", 1, WeaponType.RIFLE, true]],
+			"two identifiable shots between draws retain their order and weapon")
+	present_shot.call(1, WeaponType.PISTOL)
+	present_shot.call(2, WeaponType.RIFLE)
+	presenter.advance(ActorStep.DT, ActorStep.DT, 1.0, 0.0)
+	expect(presenter.sounds.is_empty(), "reconciling already displayed shots does not play their audio again")
+	world.close()
 
 func _load_match(tree: SceneTree) -> void:
 	var host := _beta()
@@ -325,13 +366,13 @@ func _load_match(tree: SceneTree) -> void:
 	tree.root.add_child(client)
 	expect(NetSession.match_inbox.size() == 1 and client.phase == PvpMatchClient.Phase.ONLINE,
 			"the loading inbox survives until the first network tick")
-	var shown: Vector2 = client._sampler.sample(0.0, 0.0)["focus"]
+	var shown: Vector2 = client._presenter.sampler.sample(0.0, 0.0)["focus"]
 	var weapon := actor.weapons.cycle_instance(1)
 	var old_aim := client._aim_direction()
 	var window := client.get_window()
 	var mouse := window.get_mouse_position() - window.get_visible_rect().size * 0.5
 	var aim := LocalInputSource.aim_direction(actor.position, actor.facing_direction, client.terrain.map_size,
-			client._camera.base_position, MatchController.CFG.cam_zoom, mouse)
+			client._presenter.camera.base_position, MatchController.CFG.cam_zoom, mouse)
 	expect(client.controls.frozen and weapon != client.player.weapons.cycle_instance(1)
 			and not aim.is_equal_approx(old_aim), "the incoming snapshot changes the input lock, equipment and aim origin")
 	var wheel := InputEventMouseButton.new()
@@ -350,7 +391,7 @@ func _load_match(tree: SceneTree) -> void:
 			"the same fixed step unlocks input and binds the queued wheel to the restored inventory")
 	expect(input[InputBuffer.PACKET_FRAMES].back()[InputBuffer.FRAME_AIM].is_equal_approx(aim),
 			"the outgoing aim uses the corrected player position")
-	expect(client._sampler.sample(0.0, 0.0)["focus"].is_equal_approx(shown),
+	expect(client._presenter.sampler.sample(0.0, 0.0)["focus"].is_equal_approx(shown),
 			"an authority ahead of prediction blends from the position already shown")
 	await tree.physics_frame
 	await tree.process_frame
@@ -372,6 +413,32 @@ func _load_match(tree: SceneTree) -> void:
 			"the round baseline resets terrain and input on the mounted match")
 	client._process(ActorStep.DT)
 	expect(stand.visible, "the next round restores the street lamp with its support")
+	client.free()
+	NetSession.close()
+	host.world.close()
+
+func _live_after_down(tree: SceneTree) -> void:
+	var host := _beta()
+	var payload := _baseline(host)
+	PvpSession.begin_match(payload, payload.map)
+	var client: PvpMatchClient = preload("res://scenes/pvp_game.tscn").instantiate()
+	tree.root.add_child(client)
+	client.set_process(false)
+	client.set_physics_process(false)
+	client._process(ActorStep.DT)
+	host.world.players[1].force_down()
+	host.fixed_step()
+	NetSession._on_state(host.packet({}))
+	client._physics_process(ActorStep.DT)
+	client._process(ActorStep.DT)
+	var tick := client.world.tick
+	host.fixed_step()
+	NetSession._on_state(host.packet({}))
+	client._physics_process(ActorStep.DT)
+	client._process(ActorStep.DT)
+	expect(client.world.tick > tick and client.session.latest_authority.checkpoint.tick == host.world.tick
+			and client._view.post._mat.get_shader_parameter("desat") == 1.0,
+			"multiplayer keeps drawing the current match after a confirmed death")
 	client.free()
 	NetSession.close()
 	host.world.close()

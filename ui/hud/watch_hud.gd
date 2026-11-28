@@ -4,6 +4,8 @@ extends Control
 # 白色短针显示时间颗粒余额，红色长针显示短期消耗。透支时表盘中央显示红色负数。
 # 表盘纹理也用于 Beta 模式卡片。
 
+const TIME_REWIND := Color(0.86, 0.90, 0.95, 0.55)
+const TIME_HASTE := Color8(168, 96, 216)
 const DIAL := preload("res://assets/textures/watch_dial.png")
 const BIG_FONT := 96
 const SHORT_HAND_LEN := 0.30
@@ -20,14 +22,37 @@ const FOLLOW_RATE := 10.0           # 主读数每帧向实际余额逼近的速
 var _big: Label = null
 var _cap: Label = null
 var _center: Label = null
-var _disp := 0.0                    # 当前显示余额,每帧逐步接近实际余额
-var _clock: MatchFrame.Clock
-var _tremble_t := 0.0
-var _lock_flash_t := 0.0
-var _rng := RandomNumberGenerator.new()
+var _face: Dictionary
 
-func _init(clock: MatchFrame.Clock) -> void:
-	_clock = clock
+class State:
+	var reading := -1.0
+	var tremble := 0.0
+	var flash := 0.0
+	var rng := RandomNumberGenerator.new()
+	var shake := Vector2.ZERO
+
+	func advance(clock: MatchFrame.Clock, delta: float, now: float, solo: bool) -> Dictionary:
+		reading = clock.balance if reading < 0.0 else lerpf(reading, clock.balance, minf(1.0, delta * FOLLOW_RATE))
+		tremble = maxf(0.0, tremble - delta)
+		flash = maxf(0.0, flash - delta)
+		if delta > 0.0:
+			shake = Vector2.ZERO if tremble == 0.0 else Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)) * (TREMBLE_SHAKE * tremble / TREMBLE_TIME)
+		var symbol := ""
+		var tint := UiDesign.C_TEXT
+		var alpha := 1.0
+		if clock.rewind:
+			symbol = "◁ ◁"
+			if solo:
+				tint = TIME_REWIND
+				alpha = 0.75 + 0.25 * sin(now * 9.0)
+		elif solo and clock.haste:
+			symbol = "▶ ▶"
+			tint = TIME_HASTE
+			alpha = 0.8 + 0.2 * sin(now * 5.0)
+		return {"symbol": symbol, "symbol_color": tint, "symbol_alpha": alpha, "reading": roundi(reading), "cap": int(clock.cap), "allowance": clock.allowance,
+			"borrowed": clock.borrowed, "color": UiDesign.C_DANGER if clock.rewind else UiDesign.C_GRACE if clock.haste else UiDesign.C_TEXT,
+			"shake": shake, "short_hand": clampf(clock.balance / maxf(clock.cap, 1.0), 0.0, 1.0),
+			"long_hand": clock.long_turns, "flash": flash > 0.0 and fmod(flash, FLASH_BLINK) > FLASH_BLINK * 0.5}
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -65,7 +90,6 @@ func _build() -> void:
 
 	add_child(_center)
 	_center.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
-	_disp = _clock.balance if _clock != null else 0.0
 
 func _themed_label(variation: StringName) -> Label:
 	var l := Label.new()
@@ -78,56 +102,24 @@ func _outline(l: Label, size: int) -> void:
 	l.add_theme_constant_override("outline_size", maxi(size / 12, 4))
 	l.add_theme_color_override("font_outline_color", UiDesign.C_BG)
 
-func present(clock: MatchFrame.Clock, delta: float) -> void:
-	if clock == null:
-		return
-	_clock = clock
-	_disp = lerpf(_disp, clock.balance, minf(1.0, delta * FOLLOW_RATE))
-	_big.text = str(int(round(_disp)))
-	_big.add_theme_color_override("font_color", _readout_color(clock))
-	_cap.text = "上限 %d" % int(clock.cap)
-	_center.text = str(clock.allowance)
-	if clock.borrowed:
+func display(face: Dictionary) -> void:
+	_face = face
+	_big.text = str(face.reading)
+	_big.add_theme_color_override("font_color", face.color)
+	_cap.text = "上限 %d" % face.cap
+	_center.text = str(face.allowance)
+	if face.borrowed:
 		_center.add_theme_color_override("font_color", UiDesign.C_DANGER)
 	else:
 		_center.remove_theme_color_override("font_color")
-	_tremble_t = maxf(_tremble_t - delta, 0.0)
-	_lock_flash_t = maxf(_lock_flash_t - delta, 0.0)
 	queue_redraw()
 
-func _readout_color(clock: MatchFrame.Clock) -> Color:
-	if clock.rewind:
-		return UiDesign.C_DANGER
-	if clock.haste:
-		return UiDesign.C_GRACE
-	return UiDesign.C_TEXT
-
 func _draw() -> void:
-	if _clock == null:
-		return
-	var shake := Vector2.ZERO
-	if _tremble_t > 0.0:
-		shake = Vector2(_rng.randf_range(-1.0, 1.0), _rng.randf_range(-1.0, 1.0)) \
-				* (TREMBLE_SHAKE * (_tremble_t / TREMBLE_TIME))
-	draw_texture(DIAL, shake)
-	var c := DIAL.get_size() * 0.5 + shake
-	var a_short := -PI * 0.5 + TAU * clampf(_clock.balance / maxf(_clock.cap, 1.0), 0.0, 1.0)
-	draw_line(c, c + Vector2(cos(a_short), sin(a_short)) * (DIAL.get_width() * SHORT_HAND_LEN),
-			UiDesign.C_WHITE, SHORT_HAND_W)
-	var a_long := -PI * 0.5 + TAU * _clock.long_turns
-	var long_col := UiDesign.C_DANGER
-	if _lock_flash_t > 0.0 and fmod(_lock_flash_t, FLASH_BLINK) > FLASH_BLINK * 0.5:
-		long_col = UiDesign.C_DANGER.lightened(0.35)
-	draw_line(c, c + Vector2(cos(a_long), sin(a_long)) * (DIAL.get_width() * LONG_HAND_LEN),
-			long_col, LONG_HAND_W)
-	draw_circle(c, HUB_RADIUS, UiDesign.C_BG)
-
-
-# 时间颗粒到账时让表盘短暂抖动。
-func tremble() -> void:
-	_tremble_t = TREMBLE_TIME
-
-
-# 达到透支上限并停用时间技能时，长针闪烁。
-func flash_locked() -> void:
-	_lock_flash_t = LOCK_FLASH_TIME
+	if _face.is_empty(): return
+	draw_texture(DIAL, _face.shake)
+	var center: Vector2 = DIAL.get_size() * 0.5 + _face.shake
+	var short_hand := Vector2.UP.rotated(TAU * _face.short_hand) * DIAL.get_width() * SHORT_HAND_LEN
+	var long_hand := Vector2.UP.rotated(TAU * _face.long_hand) * DIAL.get_width() * LONG_HAND_LEN
+	draw_line(center, center + short_hand, UiDesign.C_WHITE, SHORT_HAND_W)
+	draw_line(center, center + long_hand, UiDesign.C_DANGER.lightened(0.35) if _face.flash else UiDesign.C_DANGER, LONG_HAND_W)
+	draw_circle(center, HUB_RADIUS, UiDesign.C_BG)

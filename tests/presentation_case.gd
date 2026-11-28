@@ -23,17 +23,23 @@ func _street_lamps(tree: SceneTree) -> void:
 	CyrmMap.write_cells(map, CyrmMap.SCENE, [0, 2, wood, 20, 10, wood])
 	map.points[5] = {"kind": "lamp", "cell": Vector2i(0, 1), "tone": "warm"}
 	map.points[8] = {"kind": "lamp", "cell": Vector2i(20, 9), "tone": "cool"}
-	var intro := RunIntro.new(CyrmMap.from_bytes(CyrmMap.to_bytes(map)))
+	var spec := WorldSpec.solo(map, Vector2i(4, 4), [WeaponType.RIFLE], 0)
+	var simulation := MatchWorld.new(spec)
+	var presenter := MatchPresenter.new(spec, simulation.terrain, 1, simulation.time_account(1))
+	var intro := RunIntro.new(map, presenter.world.textures.items)
 	var support := CyrmMap.lamp_support(Vector2i(0, 1), map.size)
 	var view: MatchView = load("res://scenes/match_view.tscn").instantiate()
 	tree.root.add_child(view)
+	view.mount(map, WorldSpec.SOLO, true, false)
+	view.textures = intro.textures
 	var canvas := view._canvas
 	for minute: float in [Daylight.NOON, 0.0]:
-		canvas.set_daylight(minute)
-		intro.patch_walls({support: minute == Daylight.NOON})
-		intro.append([float(intro.frames.size()), intro.walls, Vector2.ZERO, Vector2.ZERO,
-				view._screen.display_state(), canvas.display_state(intro.texture_index)])
-	view.mount_intro(intro)
+		if minute == 0.0:
+			simulation.terrain.apply_at(simulation.terrain.version, {simulation.terrain.sub_position(support): 0})
+		presenter.preview_minute = minute
+		presenter.accept({"current": simulation.sample()})
+		intro.append(presenter.advance(0.1, 0.1, 1.0, 0.0))
+	simulation.close()
 	var lamps := canvas.lamps
 	var stand: Node2D = lamps._supports[support]
 	var bulbs: Array[Vector2] = []
@@ -52,21 +58,24 @@ func _street_lamps(tree: SceneTree) -> void:
 			"midnight uses the warm lamp's full energy at the authored height")
 	canvas.set_daylight(350)
 	expect(lamps.night > 0 and lamps.night < 1, "the filament and light fade continuously at dawn")
-	canvas.set_daylight(0)
-	canvas.begin(15)
+	var crowd := WorldDrawing.new(WorldDrawing.Textures.new())
+	crowd.data.actors = 15
+	crowd.data.minute = 0.0
+	canvas.draw_world(crowd.data, [])
 	expect(canvas._split_player_batches, "lit street lamps share the per-item light budget with eye lights")
-	canvas.set_daylight(Daylight.NOON)
-	canvas.begin(15)
+	crowd.data.minute = Daylight.NOON
+	canvas.draw_world(crowd.data, [])
 	expect(not canvas._split_player_batches, "unlit lamps do not split a 15-player batch")
-	view.show_intro_frame(intro.frames[1], [])
+	view.draw_frame(intro.frames[1])
 	expect(not stand.visible and lamps.lit_count(corner) == 0, "the first captured frame can start with a destroyed support")
-	view.show_intro_frame(intro.frames[0], [])
+	view.draw_frame(intro.frames[0])
 	expect(stand.visible and not light.enabled, "rewinding restores the fixture under the recorded daylight")
-	view.terrain_view.patch({support: false})
+	view.draw_frame(intro.frames[1])
 	canvas.set_daylight(0.0)
 	expect(not stand.visible and lamps._supports[CyrmMap.lamp_support(Vector2i(20, 9), map.size)].visible,
 			"a live terrain patch hides only its own stand, including every periodic copy")
-	view.terrain_view.patch({support: true})
+	view.draw_frame(intro.frames[0])
+	canvas.set_daylight(0.0)
 	expect(stand.visible and light.enabled, "the same support update restores the nighttime lamp on reset")
 	view.free()
 
@@ -119,32 +128,48 @@ func _bird_materials(tree: SceneTree) -> void:
 	var image := EnemyType.get_type("black_bird").frames.get_frame_texture(&"sleep", 0) as AtlasTexture
 	var surface := image.atlas as CanvasTexture
 	var trails := AfterImageField.new()
-	canvas.begin(1)
-	for style in [WorldCanvas.Pass.NORMAL, WorldCanvas.Pass.MASK, WorldCanvas.Pass.GLOW]:
-		canvas.sprite(surface, image.region, Transform2D.IDENTITY, Color.WHITE, style)
-	trails.spawn(0.0, image, Transform2D.IDENTITY, Color.WHITE, WorldCanvas.Pass.NORMAL, 1.0)
-	trails.present(0.1, Vector2.ZERO, canvas, Vector2(320, 240))
-	expect(canvas._batches[0].rows[0][0] == surface, "the bird body uses its lit surface")
+	var drawing := WorldDrawing.new(WorldDrawing.Textures.new())
+	for style in [WorldDrawing.Pass.NORMAL, WorldDrawing.Pass.MASK, WorldDrawing.Pass.GLOW]:
+		drawing.sprite(surface, image.region, Transform2D.IDENTITY, Color.WHITE, style)
+	trails.spawn(1, 0.0, image, Transform2D.IDENTITY, Color.WHITE, WorldDrawing.Pass.NORMAL, 1.0)
+	trails.present(0.1, Vector2.ZERO, drawing, Vector2(320, 240))
+	canvas.draw_world(drawing.data, drawing.textures.items)
+	expect(canvas._textures[canvas._batches[0].rows[0][0]] == surface, "the bird body uses its lit surface")
 	for i in range(1, 4):
-		expect(canvas._batches[i].rows[0][0] == surface.diffuse_texture, "silhouette, glow and trail use the original bird art")
+		expect(canvas._textures[canvas._batches[i].rows[0][0]] == surface.diffuse_texture, "silhouette, glow and trail use the original bird art")
 	canvas.free()
 
 func _result_panel(tree: SceneTree) -> void:
 	var hud := PvpHud.new()
 	hud.mode = WorldSpec.ROYALE
 	tree.root.add_child(hud)
-	var result := PvpHud.Round.new()
-	result.title = "游戏结束"
-	result.subtitle = "平局"
-	hud.show_round(result)
+	var host := arena(hud.mode, [1, 2], {}, RoomOptions.normalized(hud.mode, {}))
+	var world := host.world
+	var score := RoundProjection.new(world.spec, 1)
+	var names := {1: "A", 2: "B"}
+	world.rules.phase = MatchRules.Phase.COUNTDOWN
+	world.rules.round_timer = 3.0
+	var sample := world.capture()
+	sample.grace = {}
+	expect(score.advance(sample, names, 0.0).title == "3" and score.advance({}, names, 1.1).title == "2",
+			"the countdown advances between snapshots")
+	sample.tick += 1
+	expect(score.advance(sample, names, 0.0).title == "2", "a later snapshot cannot restart an active countdown")
+	sample.tick += 1
+	sample.rules[MatchRules.State.PHASE] = MatchRules.Phase.MATCH_OVER
+	hud.display(score.advance(sample, names, 0.0))
 	expect(hud._result.visible and not hud._broadcast.visible and hud._result_subtitle.visible
-			and hud._result_subtitle.text == result.subtitle, "only the result panel shows the final outcome")
+			and hud._result_subtitle.text == "平局", "only the result panel shows the final outcome")
 	var returns: Array = []
 	hud.return_requested.connect(func() -> void: returns.append(true))
 	hud._return_button.pressed.emit()
 	hud._request_return()
 	expect(returns.size() == 1 and hud._return_button.disabled, "a confirmed player waits for the room without a second request")
+	hud.show_connected(42)
+	hud._request_return()
+	expect(returns.size() == 2 and hud._ping.text == "42ms", "a reconnected player can confirm the return again")
 	hud.free()
+	world.close()
 
 func _loading_failure(tree: SceneTree) -> void:
 	await SceneTransition.change_with_builder(tree, func() -> Node: return null, "载入中")
@@ -179,7 +204,7 @@ func _detached_match() -> void:
 
 func _solo_scene(tree: SceneTree) -> void:
 	var map := CyrmMap.load_file("res://maps/newfactory.cyrm")
-	var level := SoloLevel.create(map, SpawnPicker.single_spawn(map), [WeaponType.RIFLE])
+	var level := SoloLevel.create(map, SpawnPicker.single_spawn(map), [WeaponType.RIFLE], "")
 	tree.root.add_child(level)
 	var game := level.session.world
 	var sim := game.combat
@@ -187,7 +212,7 @@ func _solo_scene(tree: SceneTree) -> void:
 	expect(sim.enemies.size() == enemy_count and enemy_count > 0, "the solo match owns the map's enemies")
 	var viewport := level.get_node("View/WorldViewport")
 	var nodes := viewport.get_child_count()
-	expect(viewport.get_children() == [level._view.camera, level._view.terrain_view, level._world._canvas],
+	expect(viewport.get_children() == [level._view.camera, level._view.terrain_view, level._view._canvas],
 			"only the camera and world graphics are mounted under the viewport")
 	await tree.physics_frame
 	Input.action_press(&"attack")
@@ -202,13 +227,13 @@ func _solo_scene(tree: SceneTree) -> void:
 		await tree.physics_frame
 		expect(bullet.traveled > first_step, "the following tick continues the same projectile")
 	var tick := sim.tick
-	var feedback := level._view.feedback
-	var effect_time := feedback._now
+	var feedback := level._presenter.feedback
+	var effect_time := feedback.now
 	var daylight_time := game.world_time.elapsed
 	level._view.pause.set_open(true)
 	await tree.process_frame
 	await tree.process_frame
-	expect(sim.tick == tick and game.world_time.elapsed == daylight_time and feedback._now > effect_time,
+	expect(sim.tick == tick and game.world_time.elapsed == daylight_time and feedback.now > effect_time,
 			"pause stops simulation and daylight while the scene tree advances HUD feedback")
 	level._view.pause.set_open(false)
 	await tree.physics_frame
@@ -229,7 +254,10 @@ func _solo_scene(tree: SceneTree) -> void:
 			"releasing rewind runs the very next combat tick on the new branch")
 	var old_drop: WeaponPickup = sim.ground.items.values()[0]
 	var old_enemy := sim.enemies[0]
-	level.restart_single()
+	level.player.force_down()
+	level._step(ActorInput.neutral())
+	Input.action_press(&"R")
+	level._process(ActorStep.DT)
 	await tree.physics_frame
 	expect(not old_drop.rid.is_valid() and not old_enemy.rid.is_valid() and sim.enemies.size() == enemy_count
 			and sim.enemies[0] != old_enemy
@@ -243,9 +271,8 @@ func _actor_animation(tree: SceneTree) -> void:
 	var id := actor.role
 	var pose := func(part: int) -> Transform2D:
 		_draw_actor(display, actor)
-		var canvas := display._world._canvas
-		var batch := canvas._batches[0 if part == 0 else canvas._batch_count - 1]
-		return batch.rows[0][2]
+		var row: Array = display.drawing.sprites[0 if part == 0 else -1]
+		return row[2]
 
 	var foot := actor.collision_rect().end.y - actor.position.y
 	_place(actor, Vector2(160, 192 - foot - 8))
@@ -290,11 +317,10 @@ func _actor_animation(tree: SceneTree) -> void:
 			"the held gun tilts and drops during reload")
 	var lowest_drop := actor.position + Vector2.DOWN * CFG.weapon_pickup_radius
 	display._frame.pickups.append([actor.equipped.type_id, lowest_drop, true])
-	display._world.present(display._frame)
-	var key := display._world._pickup_nodes[0]
-	var ring := display._world._reload_node
-	expect(key.visible and ring.visible and key.position.y + PickupPrompt.BOX.y * 0.5 <
-			ring.position.y - ReloadRing.RADIUS - ReloadRing.WIDTH * 0.5,
+	var drawing := display._world.build(display._frame)
+	var key: Vector2 = drawing.prompts[0][0]
+	var ring: Vector2 = drawing.reload[0]
+	expect(key.y + PickupPrompt.BOX.y * 0.5 < ring.y - ReloadRing.RADIUS - ReloadRing.WIDTH * 0.5,
 			"even the lowest reachable pickup leaves the whole reload ring visible")
 	display.free()
 	cleanup()
@@ -304,8 +330,7 @@ func _damage_numbers(tree: SceneTree) -> void:
 	var shooter := player(parent)
 	var sim := parent.combat
 	var bird := sim.add_enemy("jump_bird", shooter, Vector2.ZERO)
-	var view := WorldView.new()
-	view.bind(canvas_for(parent), parent.terrain.map_size)
+	var view := WorldView.new(parent.terrain.map_size)
 	var spec := WorldSpec.solo(parent.document, Vector2i.ZERO, [WeaponType.RIFLE], 0)
 	var presenter := MatchPresenter.new(spec, parent.terrain, shooter.role, null)
 	var frame := presenter.frame
@@ -318,13 +343,12 @@ func _damage_numbers(tree: SceneTree) -> void:
 	for cue: Array in frame.cues:
 		if cue[0] == "number":
 			view.hit(cue[1], cue[2], cue[3], cue[4])
-	view.present(frame)
-	var labels: Array = view._canvas._labels[1]
+	var labels: Array = view.build(frame).labels[1]
 	expect(bird.is_dead and labels.size() == 1 and labels[0][0] == str(lethal_damage),
 			"the hit that kills an enemy still produces a damage number")
 	sim.resolve_hit(shooter, bird, CombatProfiles.DIRECT, bird.position, 1, 0.0)
 	frame.now = 1.0
-	view.present(frame)
+	labels = view.build(frame).labels[1]
 	expect(labels.is_empty(), "hitting an enemy that is already dead produces no damage number")
 	cleanup()
 
@@ -367,12 +391,13 @@ func _daylight_render(tree: SceneTree) -> void:
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	tree.root.add_child(viewport)
 	var canvas := canvas_for(viewport)
-	canvas.rect(Rect2(4, 4, 16, 16), Color.WHITE, -1, false)
-	canvas.rect(Rect2(24, 4, 16, 16), Color.WHITE)
-	canvas.rect(Rect2(64, 4, 16, 16), Color(1, 0, 0, 0.5), -1, false)
-	canvas.rect(Rect2(4, 46, 88, 12), Color.GRAY, -1, false)
-	canvas.rect(Rect2(42, 33, 12, 27), Color.BLACK, -1, false)
-	canvas.submit()
+	var drawing := WorldDrawing.new(WorldDrawing.Textures.new())
+	drawing.rect(Rect2(4, 4, 16, 16), Color.WHITE, -1, false)
+	drawing.rect(Rect2(24, 4, 16, 16), Color.WHITE)
+	drawing.rect(Rect2(64, 4, 16, 16), Color(1, 0, 0, 0.5), -1, false)
+	drawing.rect(Rect2(4, 46, 88, 12), Color.GRAY, -1, false)
+	drawing.rect(Rect2(42, 33, 12, 27), Color.BLACK, -1, false)
+	canvas.draw_world(drawing.data, drawing.textures.items)
 	canvas.set_daylight(Daylight.NOON)
 	await RenderingServer.frame_post_draw
 	var noon := viewport.get_texture().get_image()
@@ -419,13 +444,13 @@ func _weapon_highlight(viewport: SubViewport, canvas: WorldCanvas) -> void:
 	var matte := metal.duplicate() as CanvasTexture
 	matte.specular_color = Color.BLACK
 	var region: Rect2 = WeaponRegistry.definition(8)["region"]
-	canvas.set_daylight(540)
+	var drawing := WorldDrawing.new(WorldDrawing.Textures.new())
+	drawing.data.minute = 540.0
+	drawing.sprite(matte, region, Transform2D(0.0, Vector2(48, 32)))
+	drawing.sprite(metal, region, Transform2D(0.0, Vector2(144, 32)))
+	canvas.draw_world(drawing.data, drawing.textures.items)
 	canvas._directional.energy = 0.88
 	canvas._directional.height = 0.47
-	canvas.begin(0)
-	canvas.sprite(matte, region, Transform2D(0.0, Vector2(48, 32)))
-	canvas.sprite(metal, region, Transform2D(0.0, Vector2(144, 32)))
-	canvas.submit()
 	await RenderingServer.frame_post_draw
 	var image := viewport.get_texture().get_image()
 	var highlights := 0
@@ -437,15 +462,14 @@ func _weapon_highlight(viewport: SubViewport, canvas: WorldCanvas) -> void:
 
 func _player_lighting_render(viewport: SubViewport, canvas: WorldCanvas) -> void:
 	viewport.size = Vector2i(176, 132)
-	var view := WorldView.new()
-	view.bind(canvas, Vector2(viewport.size))
+	var view := WorldView.new(Vector2(viewport.size))
 	var frame := MatchFrame.new()
 	var actor := MatchFrame.Pose.new()
 	actor.anchor = Vector2(60, 60)
 	frame.actors.append(actor)
 	var render := func(minute: float, eyes := true) -> Image:
 		frame.day_minute = minute
-		view.present(frame)
+		canvas.draw_world(view.build(frame), view.textures.items)
 		for light in canvas._eye_lights:
 			light.enabled = eyes
 		await RenderingServer.frame_post_draw
@@ -502,7 +526,6 @@ func _camera(tree: SceneTree) -> void:
 	cleanup()
 	var parent := world(tree)
 	var cam := MatchCamera.new()
-	parent.add_child(cam)
 	var target := Node2D.new()
 	parent.add_child(target)
 	target.position = Vector2(300, 200)
@@ -511,12 +534,10 @@ func _camera(tree: SceneTree) -> void:
 	expect(cam.base_position.is_equal_approx(Vector2(300, 200) + bias),
 			"the first bind initializes the base position with the y bias")
 	var leading := MatchCamera.new()
-	parent.add_child(leading)
 	leading.advance(ActorStep.DT, target.position, parent.terrain.map_size, CFG.move_speed * 0.5)
 	expect(leading.base_position.is_equal_approx(target.position + bias + Vector2(50, 0)),
 			"half running speed leads the player by fifty world pixels")
 	leading = MatchCamera.new()
-	parent.add_child(leading)
 	leading.advance(ActorStep.DT, target.position, parent.terrain.map_size, -CFG.charge_velocity)
 	expect(leading.base_position.is_equal_approx(target.position + bias + Vector2(-100, 0)),
 			"a leftward dash caps the camera lead at one hundred world pixels")
@@ -560,7 +581,9 @@ func _pickup_bindings(tree: SceneTree) -> void:
 	viewport.transparent_bg = true
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	tree.root.add_child(viewport)
-	var prompt := PickupPrompt.new()
+	var prompt := Node2D.new()
+	var key := [""]
+	prompt.draw.connect(func() -> void: PickupPrompt.paint(prompt, key[0]))
 	prompt.position = Vector2(viewport.size) * 0.5
 	viewport.add_child(prompt)
 	var original := InputMap.action_get_events(&"F")
@@ -574,6 +597,7 @@ func _pickup_bindings(tree: SceneTree) -> void:
 	for binding in [f, e, mouse, f]:
 		InputMap.action_erase_events(&"F")
 		InputMap.action_add_event(&"F", binding)
+		key[0] = Settings.get_binding_names("F")
 		prompt.queue_redraw()
 		await RenderingServer.frame_post_draw
 		images.append(viewport.get_texture().get_image())

@@ -19,8 +19,6 @@ var sub: Label
 
 var _center: CenterContainer
 var _panel: PanelContainer
-var _clock := CountdownClock.new()
-var _punch := 0.0
 
 
 func _ready() -> void:
@@ -68,44 +66,11 @@ func _ready() -> void:
 	hide()
 
 
-func set_broadcast(visible_on: bool, title: String, subtitle: String) -> void:
-	_clock.stop()
-	visible = visible_on
-	mask.visible = visible_on
-	_center.visible = visible_on
+func display(title: String, subtitle: String, punch: float) -> void:
+	visible = not title.is_empty()
+	mask.visible = visible
+	_center.visible = visible
 	big.text = title
 	sub.text = subtitle
-	_punch = 1.0 if visible_on else 0.0
-	_apply_punch()
-
-
-func start_countdown(seconds: float, subtitle: String) -> void:
-	show()
-	mask.visible = true
-	_center.visible = true
-	sub.text = subtitle
-	_count(_clock.start(seconds))
-
-
-func _process(delta: float) -> void:
-	if _punch > 0.0:
-		_punch = maxf(0.0, _punch - delta * PUNCH_DECAY)
-		_apply_punch()
-	# 倒计时停止后保留最后显示的数字。
-	var number := _clock.tick(delta)
-	if number > 0:
-		_count(number)
-
-
-func _count(number: int) -> void:
-	var text := str(number)
-	if big.text != text:
-		big.text = text
-		_punch = 1.0
-		_apply_punch()
-
-
-func _apply_punch() -> void:
-	if _panel.size.x > 0.0:
-		_panel.pivot_offset = _panel.size * 0.5
-		_panel.scale = Vector2.ONE * (1.0 + PUNCH_SCALE * _punch)
+	_panel.pivot_offset = _panel.size * 0.5
+	_panel.scale = Vector2.ONE * (1.0 + PUNCH_SCALE * punch)

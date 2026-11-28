@@ -1,5 +1,5 @@
 class_name MatchCamera
-extends Camera2D
+extends RefCounted
 
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
@@ -9,6 +9,7 @@ var _shake_amt: float = 0.0
 var _shake_time: float = 0.0
 var _shake_dur: float = 0.0
 var _shake_offset: Vector2 = Vector2.ZERO
+var position := Vector2.ZERO
 var base_position := Vector2.ZERO
 var _bound := false
 var _rng := RandomNumberGenerator.new()
@@ -16,21 +17,6 @@ var _rng := RandomNumberGenerator.new()
 func reset_follow() -> void:
 	_bound = false
 	_shake_time = 0.0
-
-func fire(weapon: int) -> void:
-	var spec := WeaponRegistry.definition(weapon)
-	if spec.has("shake"):
-		shake(spec["shake"], spec.get("shake_time", 0.1))
-
-func blast(distance: float, radius: float) -> void:
-	var reach := maxf(radius * 2.5, 400.0)
-	if distance <= reach:
-		shake(CFG.explosion_cam_shake * (1.0 - distance / reach), CFG.explosion_cam_shake_time)
-
-func hit(ratio: float) -> void:
-	if ratio > 0.0:
-		shake(CFG.hit_cam_shake * (ratio / 0.25) if ratio > 0.25 else 6.0,
-				CFG.hit_cam_shake_time if ratio > 0.25 else 0.15)
 
 ## 新抖动至少与当前衰减后的抖动一样强时，才更新幅度。新抖动与原抖动的剩余时间取较长者。
 func shake(amount: float, duration: float) -> void:

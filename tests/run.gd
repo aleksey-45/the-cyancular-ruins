@@ -3,7 +3,7 @@ extends Node
 const GROUPS := {
 	"editor": ["editor_case"], "lan": ["lan_case"], "net": ["net_case"], "transport": ["transport_case"],
 	"terrain": ["terrain_case"], "monitor": ["monitor_case"], "prediction": ["prediction_case"],
-	"simulation": ["simulation_case", "time_case", "movement_case", "match_rules_case", "presentation_case"],
+	"simulation": ["simulation_case", "time_case", "movement_case", "match_rules_case", "presentation_case", "replay_case"],
 }
 
 func _ready() -> void:

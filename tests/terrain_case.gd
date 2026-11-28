@@ -449,11 +449,13 @@ func _map_format() -> void:
 	expect(layer.get_used_cells().size() == 36 and layer.get_cell_atlas_coords(corner) == atlas,
 			"initial paint adds only the one-subcell seam bands around the 4x4 map")
 	colored_terrain.apply_at(colored_terrain.version, {sub: 0})
-	display.patch(colored_terrain.take_wall_changes())
+	expect(colored_terrain.take_wall_changes() == {0: false}, "the broken corner is reported once")
+	display.show_walls(PackedByteArray([1, 0]))
 	expect(layer.get_used_cells().size() == 32 and layer.get_cell_source_id(sub) == -1
 			and layer.get_cell_source_id(corner) == -1, "destroying a corner tile erases its four visual cells")
 	colored_terrain.apply_at(0, {})
-	display.patch(colored_terrain.take_wall_changes())
+	expect(colored_terrain.take_wall_changes() == {0: true}, "the restored corner is reported once")
+	display.show_walls(PackedByteArray([0, 0]))
 	expect(layer.get_used_cells().size() == 36 and layer.get_cell_atlas_coords(sub) == atlas
 			and layer.get_cell_atlas_coords(corner) == atlas,
 			"rewind restores the tinted tile and its seam copy")

@@ -10,23 +10,24 @@ var _rows: Array[Array] = []
 var _free: Array[Array] = []
 
 
-func spawn(now: float, image: AtlasTexture, pose: Transform2D, color: Color,
-		pass_kind: WorldCanvas.Pass, life: float) -> void:
+func spawn(actor: int, now: float, image: AtlasTexture, pose: Transform2D, color: Color,
+		pass_kind: WorldDrawing.Pass, life: float) -> void:
 	if _rows.size() == MAX_ENTRIES:
 		_free.append(_rows.pop_front())
 	var row: Array = _free.pop_back() if not _free.is_empty() \
-			else [0.0, null, Transform2D.IDENTITY, Color.WHITE, WorldCanvas.Pass.NORMAL, 0.0]
+			else [0.0, null, Transform2D.IDENTITY, Color.WHITE, WorldDrawing.Pass.NORMAL, 0.0, 0]
 	row[0] = now
 	row[1] = image
 	row[2] = pose
 	row[3] = color
 	row[4] = pass_kind
 	row[5] = life
+	row[6] = actor
 	_rows.append(row)
 
 
 ## 跨过地图边界时，残影绘制在离相机最近的一侧。
-func present(now: float, anchor: Vector2, canvas: WorldCanvas, size: Vector2) -> void:
+func present(now: float, anchor: Vector2, canvas: WorldDrawing, size: Vector2) -> void:
 	for i in range(_rows.size() - 1, -1, -1):
 		var row: Array = _rows[i]
 		var lifetime := float(row[5])
@@ -40,9 +41,11 @@ func present(now: float, anchor: Vector2, canvas: WorldCanvas, size: Vector2) ->
 		var pose: Transform2D = row[2]
 		pose.origin = ToroidalGrid.anchor_to_nearest(pose.origin, anchor, size)
 		var image: AtlasTexture = row[1]
-		canvas.sprite(WorldCanvas.diffuse(image.atlas), image.region, pose, color, row[4])
+		canvas.sprite(WorldDrawing.diffuse(image.atlas), image.region, pose, color, row[4])
 
 
-func clear() -> void:
-	_free.append_array(_rows)
-	_rows.clear()
+func clear_actor(id: int) -> void:
+	for i in range(_rows.size() - 1, -1, -1):
+		if _rows[i][6] == id:
+			_free.append(_rows[i])
+			_rows.remove_at(i)

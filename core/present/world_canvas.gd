@@ -6,9 +6,8 @@ const WHITE_MASK := preload("res://core/present/white_mask.gdshader")
 const PLAYER_CONFIG: PlayerConfig = preload("res://core/config/player_config.tres")
 const EYE_LIGHT := preload("res://assets/textures/player_light_cookie.png")
 const MAX_POINT_LIGHTS_PER_ITEM := 15  # Mobile 渲染器中一个 CanvasItem 可接收的点光源数量上限。
-enum Pass { NORMAL, PLAYER_BODY, GLOW, MASK, FOREGROUND }
-enum Mark { BOX, CIRCLE, POLYGON, LINE }
-enum Display { DAYLIGHT, EYES, BATCHES, FOREGROUND, LINES, MARKS, OVERLAY, LABELS }
+const Pass := WorldDrawing.Pass
+const Mark := WorldDrawing.Mark
 
 class SpriteBatch extends Node2D:
 	var style: int
@@ -16,20 +15,17 @@ class SpriteBatch extends Node2D:
 
 var _sky := Daylight.new()
 var lamps := StreetLamps.new()
-var _day_minute: float
 var _ambient := CanvasModulate.new()
 var _directional := DirectionalLight2D.new()
 var _eye_lights: Array[PointLight2D] = []
 var _eye_light_count := 0
 var _player_body_material := _shader_material(preload("res://core/present/player_body_lighting.gdshader"))
-var _marks: Array[Array] = []
+var _drawing: Dictionary = WorldDrawing.new(WorldDrawing.Textures.new()).data
+var _textures: Array[Texture2D]
 var _materials: Array[Material]
 var _batches: Array[SpriteBatch] = []
 var _batch_count := 0
 var _split_player_batches := false
-var _lines: Array[Array] = []
-var _overlay_marks: Array[Array] = []
-var _labels := [[], []]
 var _foreground := SpriteBatch.new()
 var overlay_layer := Node2D.new()
 
@@ -59,7 +55,6 @@ func _ready() -> void:
 	overlay_layer.draw.connect(_draw_overlay)
 
 func set_daylight(minute: float) -> void:
-	_day_minute = minute
 	_ambient.color = _sky.set_minute(minute)
 	lamps.night = _sky.night
 	var source := _sky.directional_light
@@ -90,39 +85,30 @@ func _batch(style: int, separate: bool) -> SpriteBatch:
 	_batch_count += 1
 	return batch
 
-func begin(actor_count: int) -> void:
+func draw_world(drawing: Dictionary, textures: Array[Texture2D]) -> void:
+	_drawing = drawing
+	_textures = textures
+	set_daylight(drawing.minute)
 	for batch in _batches:
 		batch.rows.clear()
 	_batch_count = 0
-	var view := get_canvas_transform().affine_inverse() * get_viewport_rect()
-	_split_player_batches = actor_count > 1 and actor_count + lamps.lit_count(view) > MAX_POINT_LIGHTS_PER_ITEM
-	_eye_light_count = 0
 	_foreground.rows.clear()
-	for rows: Array in _labels:
-		rows.clear()
-	_lines.clear()
-	_marks.clear()
-	_overlay_marks.clear()
-
-func submit() -> void:
+	var view := get_canvas_transform().affine_inverse() * get_viewport_rect()
+	_split_player_batches = drawing.actors > 1 and drawing.actors + lamps.lit_count(view) > MAX_POINT_LIGHTS_PER_ITEM
+	_eye_light_count = 0
+	for pose: Transform2D in drawing.eyes:
+		eye_light(pose)
 	for index in range(_eye_light_count, _eye_lights.size()):
 		_eye_lights[index].hide()
+	for row: Array in drawing.sprites:
+		var style: int = row[4]
+		var batch := _foreground if style == Pass.FOREGROUND else _batch(style, _split_player_batches and style == Pass.PLAYER_BODY)
+		batch.rows.append(row)
 	queue_redraw()
 	for batch in _batches:
 		batch.queue_redraw()
 	_foreground.queue_redraw()
 	overlay_layer.queue_redraw()
-
-static func diffuse(texture: Texture2D) -> Texture2D:
-	return texture.diffuse_texture if texture is CanvasTexture else texture
-
-func sprite(texture: Texture2D, region: Rect2, pose: Transform2D, color := Color.WHITE,
-		sprite_pass := Pass.NORMAL) -> void:
-	if sprite_pass == Pass.GLOW or sprite_pass == Pass.MASK:
-		texture = diffuse(texture)
-	var separate := _split_player_batches and sprite_pass == Pass.PLAYER_BODY
-	var batch := _foreground if sprite_pass == Pass.FOREGROUND else _batch(sprite_pass, separate)
-	batch.rows.append([texture, region, pose, color])
 
 func eye_light(pose: Transform2D) -> void:
 	if _eye_light_count == _eye_lights.size():
@@ -139,88 +125,35 @@ func eye_light(pose: Transform2D) -> void:
 	light.transform = pose
 	light.show()
 
-func line(points: PackedVector2Array, color: Color, width: float, overlay := false) -> void:
-	if overlay:
-		_overlay_marks.append([Mark.LINE, points, color, width])
-	else:
-		_lines.append([points, color, width])
-
-func rect(box: Rect2, color: Color, stroke := -1.0, overlay := true) -> void:
-	var rows := _overlay_marks if overlay else _marks
-	rows.append([Mark.BOX, box, color, stroke])
-
-func circle(at: Vector2, radius: float, color: Color, overlay := false) -> void:
-	var rows := _overlay_marks if overlay else _marks
-	rows.append([Mark.CIRCLE, at, radius, color])
-
-func polygon(points: PackedVector2Array, color: Color) -> void:
-	_marks.append([Mark.POLYGON, points, color])
-
-func text_at(value: String, at: Vector2, color: Color, plate := false, outline := 0) -> void:
-	_labels[int(not plate)].append([value, at, color, plate, outline])
-
-func display_state(texture_index: Callable) -> Array:
-	var eyes: Array[Transform2D] = []
-	for i in _eye_light_count:
-		eyes.append(_eye_lights[i].transform)
-	var batches: Array[Array] = []
-	for i in _batch_count:
-		var batch := _batches[i]
-		batches.append([batch.style, _index_sprites(batch.rows, texture_index)])
-	return [_day_minute, eyes, batches, _index_sprites(_foreground.rows, texture_index),
-		_copy_geometry(_lines, 0), _copy_geometry(_marks, 1), _copy_geometry(_overlay_marks, 1),
-		_labels.duplicate(true)]
-
-func show_display(state: Array, textures: Array[Texture2D]) -> void:
-	set_daylight(state[Display.DAYLIGHT])
-	begin(0)
-	for pose: Transform2D in state[Display.EYES]:
-		eye_light(pose)
-	for batch: Array in state[Display.BATCHES]:
-		_restore_sprites(_batch(batch[0], true).rows, batch[1], textures)
-	_restore_sprites(_foreground.rows, state[Display.FOREGROUND], textures)
-	_lines.assign(state[Display.LINES])
-	_marks.assign(state[Display.MARKS])
-	_overlay_marks.assign(state[Display.OVERLAY])
-	for i in _labels.size():
-		_labels[i].assign(state[Display.LABELS][i])
-	submit()
-
-static func _index_sprites(rows: Array[Array], texture_index: Callable) -> Array[Array]:
-	var captured: Array[Array] = []
-	for row in rows:
-		captured.append([texture_index.call(row[0]), row[1], row[2], row[3]])
-	return captured
-
-static func _restore_sprites(rows: Array[Array], saved: Array, textures: Array[Texture2D]) -> void:
-	for row: Array in saved:
-		rows.append([textures[row[0]], row[1], row[2], row[3]])
-
-static func _copy_geometry(rows: Array[Array], point_column: int) -> Array[Array]:
-	var captured := rows.duplicate(true)
-	for row in captured:
-		if row[point_column] is PackedVector2Array:
-			row[point_column] = row[point_column].duplicate()
-	return captured
-
 func _draw() -> void:
-	for row in _lines:
+	for row: Array in _drawing.lines:
 		draw_polyline(row[0], row[1], row[2], true)
 
 func _draw_overlay() -> void:
-	_draw_marks(overlay_layer, _overlay_marks)
-	_draw_labels(overlay_layer, _labels[1])
+	_draw_marks(overlay_layer, _drawing.overlay)
+	_draw_labels(overlay_layer, _drawing.labels[1])
+	for row: Array in _drawing.bars:
+		overlay_layer.draw_set_transform(row[0])
+		EnemyHpBar.paint(overlay_layer, row[1])
+	for row: Array in _drawing.prompts:
+		overlay_layer.draw_set_transform(row[0])
+		PickupPrompt.paint(overlay_layer, row[1])
+	var reload: Array = _drawing.reload
+	if not reload.is_empty():
+		overlay_layer.draw_set_transform(reload[0])
+		ReloadRing.paint(overlay_layer, reload[1], reload[2])
+	overlay_layer.draw_set_transform(Vector2.ZERO)
 
 func _draw_foreground() -> void:
-	_draw_marks(_foreground, _marks)
+	_draw_marks(_foreground, _drawing.marks)
 	_draw_sprites(_foreground, _foreground.rows)
-	_draw_labels(_foreground, _labels[0])
+	_draw_labels(_foreground, _drawing.labels[0])
 
 func _draw_sprites(target: CanvasItem, rows: Array) -> void:
 	for row: Array in rows:
 		var region: Rect2 = row[1]
 		target.draw_set_transform_matrix(row[2])
-		target.draw_texture_rect_region(row[0], Rect2(-region.size * 0.5, region.size), region, row[3], false, false)
+		target.draw_texture_rect_region(_textures[row[0]], Rect2(-region.size * 0.5, region.size), region, row[3], false, false)
 	target.draw_set_transform_matrix(Transform2D.IDENTITY)
 
 func _draw_marks(target: CanvasItem, rows: Array) -> void:

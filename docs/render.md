@@ -1,8 +1,8 @@
 # 渲染
 
-单人和联机对局共用 `MatchView`，使用 Godot 的 Mobile 渲染器和 1920×1440 逻辑视口。`MatchController` 通过 `MatchSampler` 从本地模拟和服务器快照采样，由 `MatchPresenter` 整理成 `MatchFrame`，供 `MatchView` 更新世界画面、后期处理和 HUD。场景树独立更新受击反馈、后期效果和联机倒计时，单人暂停或联机断线期间这些效果仍可更新。[对局控制器](../scenes/match_controller.gd) · [对局帧数据](../core/present/match_presenter.gd) · [对局场景](../scenes/match_view.tscn) · [视图更新](../core/present/match_view.gd)
+单人和联机共用 1920×1440 的逻辑视口。物理步结束时，场景调用 `MatchPresenter.accept()` 交入本机样本或联机校正结果。每次显示刷新，`advance()` 生成战斗绘制帧，`MatchView.draw_frame()` 将它应用到世界视口、后期和战斗 HUD。单人暂停或联机断线时，世界停在上一帧，界面反馈和倒计时继续推进。联机延迟、重连提示和返回房间按钮随会话事件更新。[对局调度](../scenes/match_controller.gd) · [生成绘制帧](../core/present/match_presenter.gd) · [绘制入口](../core/present/match_view.gd)
 
-`WorldView` 根据角色动作与受击状态选择动画，计算武器和特效的显示位置。`WorldCanvas` 绘制角色、武器、掉落物、弹丸和残影，相邻且使用同一材质的精灵可共用同一绘制批次，以保留遮挡顺序。它也绘制光束、弹道线、伤害数字、名牌和生命条。控制器按武器发射位置与弹道参数计算瞄准辅助线。爆炸碎屑根据引爆位置附近的地形生成。[世界视图](../core/present/world_view.gd) · [世界画布](../core/present/world_canvas.gd)
+`WorldView` 根据角色动作与受击状态选择动画，计算武器和特效的显示位置。`WorldCanvas` 绘制角色、武器、掉落物、弹丸和残影，相邻且使用同一材质的精灵可共用同一绘制批次，以保留遮挡顺序。它也绘制光束、弹道线、伤害数字、名牌和生命条。表现层按武器发射位置与弹道参数计算瞄准辅助线。爆炸碎屑根据引爆位置附近的地形生成。[世界视图](../core/present/world_view.gd) · [世界画布](../core/present/world_canvas.gd)
 
 `SquashTracker` 根据玩家和敌人的动作计算挤压与拉伸，只缩放精灵的局部坐标轴。武器挂点和瞄准沿用角色变换。`AfterImageField` 管理冲刺、加速、回溯等动作的残影与淡出，并限制存续的残影数量。[动作形变](../core/present/squash_tracker.gd) · [残影](../core/present/after_image_field.gd)
 
@@ -40,6 +40,8 @@
 
 ## 单人片头
 
-正式单人对局中，`MatchView` 在渲染前记录战场的绘制项、摄像机位置、地形和后期参数。渲染帧率上限为 60 FPS，缓存最多保留 300 帧。超出容量时，根据倒放时间轴上的采样间隔删减中间帧，保留首尾画面。[画面采集](../core/present/match_view.gd) · [抽帧与存档](../core/present/run_intro.gd)
+死亡回放是下一局的片头。从菜单开始或倒地后按 R 重开时，有上一局录像就从结尾加速倒放至出生，最长三秒。播完或按 Esc、空格跳过后即可操作。首次游玩直接开局。[单人开局](../scenes/solo_level.gd)
 
-玩家倒地、返回主菜单或正常关闭游戏时，画面记录与地图一并保存到 `user://last_run_intro.dat`。下次正式单人开局时，独立的对局视图将上一局画面倒放为片头。底片反色、扫描线、色差和横向抖动随倒放加速而增强，在开局前淡出。片头播完或跳过后清除存档，再开始对局。[单人流程](../scenes/solo_level.gd) · [操作](player.md#单人时间技能)
+正式单人对局从出生开始记录实况。第一次画出倒地姿态时将录像保存到 `user://last_run_intro.dat`，玩家仍可回溯自救，恢复后继续记录。返回菜单或正常关闭游戏也会保存本局。每局最多保留 300 张绘制帧，抽帧始终保留首尾。[抽帧与存档](../core/present/run_intro.gd)
+
+实况和片头都用 `MatchView.draw_frame()` 绘制。每帧记录镜头、毁墙掩码、水面与灯光、世界图元、拾取键名与换弹环、后期参数和战斗 HUD。地图和纹理表由整段共用，墙掩码在变化时复制。[绘制帧](../core/present/draw_frame.gd) · [绘制入口](../core/present/match_view.gd)

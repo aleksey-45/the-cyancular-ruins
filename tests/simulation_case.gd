@@ -182,10 +182,9 @@ func _compound_bow(tree: SceneTree) -> void:
 	_draw_actor(display, actor)
 	var guide := display._frame.aim_guide
 	var guide_next := guide[1]
-	var canvas := display._world._canvas
-	var sprite: Array = canvas._batches[canvas._batch_count - 1].rows[-1]
+	var sprite: Array = display.drawing.sprites[-1]
 	var nocked: Transform2D = sprite[2]
-	expect(sprite[0] == WorldView.BULLETS and nocked.origin.is_equal_approx(guide[0]),
+	expect(display._world.textures.items[sprite[0]] == WorldView.BULLETS and nocked.origin.is_equal_approx(guide[0]),
 			"the drawn arrow is centered at the start of its guide")
 	var release := step_actions(actor, _attack(0, 0, attack))
 	submit(actor, release)
@@ -198,7 +197,7 @@ func _compound_bow(tree: SceneTree) -> void:
 	var max_spread_offset := 2.0 * arrow.velocity.length() * ActorStep.DT * sin(spread * 0.5)
 	sim.step_projectile(arrow, ActorStep.DT)
 	expect(arrow.position.distance_to(guide_next) <= max_spread_offset + 0.001
-			and canvas._marks.is_empty(),
+			and display.drawing.marks.is_empty(),
 			"the first arrow step stays within spread of the guide without an explosion marker")
 
 	sim.time_field = WorldTime.new(1)

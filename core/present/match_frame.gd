@@ -56,7 +56,6 @@ var pickups: Array[Array] = []
 var projectiles: Array[Array] = []
 # 每条光束取自对应模拟帧，保存路径和本帧透明度。
 var beams: Array[Array] = []
-var wall_changes: Dictionary = {}
 var aim_guide := PackedVector2Array()
 var health: int
 var max_health: int
@@ -74,7 +73,6 @@ var clock: Clock
 var trajectories: bool
 var radar_players: bool
 var cues: Array[Array] = []
-var round: PvpHud.Round
 
 func begin(at: float, local_at: Vector2) -> void:
 	now = at

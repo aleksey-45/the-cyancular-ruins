@@ -21,26 +21,27 @@ func _ready() -> void:
 	_view.pvp_hud.return_requested.connect(NetSession.return_to_room)
 	NetBus.ping_updated.connect(_view.pvp_hud.set_ping)
 	input_sampled.connect(NetBus.send_input)
-	_presenter.names = _baseline["names"]
-	_presenter.hues = _baseline["hues"]
 	NetSession.match_baseline.connect(_install_baseline)
 	NetSession.room_changed.connect(_room_changed)
 	NetSession.connection_lost.connect(_begin_reconnect)
 	NetSession.room_closed.connect(_room_closed)
-	_baseline_ready()
+	_baseline_ready(_baseline)
 	_baseline = {}
 
-func _baseline_ready() -> void:
-	_reset_sampler()
-	_sampler.accept(session.baseline_view())
+func _baseline_ready(data: Dictionary) -> void:
+	var names: Dictionary = data.get("names", _presenter.names if _presenter else {})
+	var hues: Dictionary = data.get("hues", _presenter.hues if _presenter else {})
+	_start_presentation(session.baseline_view())
+	_presenter.names = names
+	_presenter.hues = hues
+	_view.pvp_hud.show_connected(NetBus.ping_ms)
 	phase = Phase.ONLINE
-	_view.pvp_hud.set_status("")
 	_refresh_input_lock()
 	NetBus.send_event(NetEvent.Kind.READY, session.latest_authority["checkpoint"]["rules"][MatchRules.State.NUMBER])
 
 func _install_baseline(data: Dictionary) -> void:
 	session.install(data, NetBus.ping_ms)
-	_baseline_ready()
+	_baseline_ready(data)
 
 func _room_changed(room: Dictionary) -> void:
 	if not room.in_match:
@@ -55,8 +56,7 @@ func _physics_process(delta: float) -> void:
 	for message: Array in NetSession.take_match_inbox():
 		match message[0]:
 			NetSession.MatchMessage.ROUND:
-				session.install(message[1], NetBus.ping_ms)
-				_baseline_ready()
+				_install_baseline(message[1])
 			NetSession.MatchMessage.TERRAIN:
 				session.receive_terrain(message[1])
 			NetSession.MatchMessage.STATE:
@@ -67,14 +67,13 @@ func _physics_process(delta: float) -> void:
 		_refresh_input_lock()
 		update.merge(session.predict(_sample_input(delta)))
 		input_sampled.emit(update["input"])
-		_sampler.accept(update)
+		_presenter.accept(update)
 		PerformanceStats.end(PerformanceStats.CLIENT_TICK, started)
 
 func _process(delta: float) -> void:
-	if phase == Phase.ONLINE:
-		var started := PerformanceStats.begin()
-		super(delta)
-		PerformanceStats.end(PerformanceStats.CLIENT_PRESENT, started)
+	var started := PerformanceStats.begin()
+	_present(delta if phase == Phase.ONLINE else 0.0, delta)
+	PerformanceStats.end(PerformanceStats.CLIENT_PRESENT, started)
 
 func _round_phase() -> int:
 	return session.latest_authority["checkpoint"]["rules"][MatchRules.State.PHASE]

@@ -16,7 +16,6 @@ var hues := {}
 var _spec: WorldSpec
 var _terrain: Terrain
 var _role: int
-var _team_counts: Dictionary
 var _account: GrainAccount
 var _actors := {}
 var _enemies := {}
@@ -25,40 +24,133 @@ var _blasts := {}
 var _splash_after := {}
 var _balance := -1.0
 var _locked := false
-var _round_tick := -1
+var sampler: MatchSampler
+var world: WorldView
+var camera := MatchCamera.new()
+var hud := Hud.State.new()
+var feedback := CombatFeedback.State.new()
+var watch: WatchHud.State
+var post := PostProcess.State.new()
+var _score: RoundProjection
+var radar := false
+var watch_offset := Vector2.ZERO
+var sounds: Array = []
+var pitch := 1.0
+var _now := 0.0
+var _walls := PackedByteArray()
+var _world_draw: Dictionary
 
 func _init(spec: WorldSpec, terrain: Terrain, role: int, account: GrainAccount) -> void:
 	_spec = spec
 	_terrain = terrain
 	_role = role
-	_team_counts = spec.team_counts
+	world = WorldView.new(terrain.map_size)
+	sampler = MatchSampler.new(terrain.map_size, role)
+	_walls.resize((spec.map.size.x * spec.map.size.y + 7) >> 3)
+	var cells := terrain.get_modified()
+	for cell: Vector2i in cells:
+		if cells[cell] == 0:
+			var index := terrain.sub_index(cell)
+			_walls[index >> 3] |= 1 << (index & 7)
+	terrain.take_wall_changes()
 	_account = account
 	frame.mode = spec.mode
+	if spec.mode != WorldSpec.SOLO:
+		_score = RoundProjection.new(spec, role)
 	if account != null:
+		watch = WatchHud.State.new()
 		frame.clock = MatchFrame.Clock.new()
 		_clock(account.capture_state(), false, false)
 
-func reset() -> void:
-	_actors.clear()
-	_enemies.clear()
-	_health = []
-	_blasts = {}
-	_splash_after.clear()
-	_balance = -1.0
-	_locked = false
-	_round_tick = -1
+func accept(step: Dictionary) -> void:
+	sampler.accept(step)
 
-func compose(sample: Dictionary, now: float, drop: float, walls: Dictionary) -> MatchFrame:
+## 世界时间可暂停。反馈、后期及联机倒计时使用界面时间。
+func advance(world_delta: float, ui_delta: float, alpha: float, drop: float) -> DrawFrame:
+	sounds.clear()
+	var round_sample: Dictionary
+	if world_delta > 0.0 or _world_draw.is_empty():
+		_now += world_delta
+		var sample := sampler.sample(_now, alpha)
+		round_sample = sample.round
+		var changes := _terrain.take_wall_changes()
+		_compose(sample, _now, drop, changes)
+		if not changes.is_empty():
+			_walls = _walls.duplicate()
+			for index: int in changes:
+				var bit := 1 << (index & 7)
+				if changes[index]:
+					_walls[index >> 3] &= ~bit
+				else:
+					_walls[index >> 3] |= bit
+		_apply_cues()
+		var own: Array = sample.local
+		var speed: float = own[Actor.VEL].x + own[Actor.KNOCK_VEL].x
+		camera.advance(world_delta, frame.focus, _terrain.map_size, -speed if frame.clock and frame.clock.rewind else speed)
+		_world_draw = world.build(frame, camera.position + watch_offset / CFG.cam_zoom)
+	var panel := hud.advance(frame, world_delta)
+	panel.feedback = feedback.advance(ui_delta)
+	if frame.clock:
+		panel.watch = watch.advance(frame.clock, world_delta, _now, frame.mode == WorldSpec.SOLO)
+	if frame.mode == WorldSpec.SOLO:
+		panel.day = Daylight.time_text(frame.day_minute)
+		pitch = clampf(1.0 + TCFG.LOAN_PITCH_RANGE * frame.clock.loan_depth
+				+ (0.12 if frame.clock.haste else -0.15 if frame.clock.rewind else 0.0), 0.7, 1.8)
+	else:
+		panel.score = _score.advance(round_sample, names, ui_delta)
+	if radar:
+		panel.radar = Minimap.project(frame, _terrain.map_size)
+	var screen := post.advance(frame, world_delta, ui_delta, sounds)
+	var terrain_film := 0.0
+	if frame.mode != WorldSpec.SOLO:
+		terrain_film = screen.rewind_film
+		screen.rewind_film = 0.0
+	return DrawFrame.new(_now, camera.position, _walls, Vector2(_now, terrain_film), _world_draw, panel, screen)
+
+func _apply_cues() -> void:
+	if frame.hit_ratio > 0.0:
+		var ratio := frame.hit_ratio
+		camera.shake(CFG.hit_cam_shake * ratio / 0.25 if ratio > 0.25 else 6.0, CFG.hit_cam_shake_time if ratio > 0.25 else 0.15)
+		post.hit = maxf(post.hit, clampf(ratio * 2.0, 0.5, 1.0))
+	for cue: Array in frame.cues:
+		match cue[0]:
+			"clear_motion":
+				world.clear_motion(cue[1])
+				if cue[1] == _role: camera.reset_follow()
+			"motion": world.motion(cue[1], cue[2], frame.now, cue[3])
+			"splash": world.splash(cue[1], cue[2], frame.now)
+			"debris": world.debris(cue[1], cue[2], frame.now)
+			"number": world.hit(cue[1], cue[2], cue[3], cue[4])
+			"sound": sounds.append([cue[1], 0.0])
+			"hit": feedback.hit_at = feedback.now
+			"kill":
+				feedback.kill(cue[1])
+				sounds.append(["kill", 0.0])
+			"streak_reset": feedback.streak = 0
+			"grain": world.grain(cue[1], frame.now, TCFG.ELITE_GRAIN_DELAY_TICKS * ActorStep.DT)
+			"grain_received": watch.tremble = WatchHud.TREMBLE_TIME
+			"loan_locked": watch.flash = WatchHud.LOCK_FLASH_TIME
+			"fire":
+				world.fire(cue[1], cue[2], frame.now)
+				var weapon := WeaponRegistry.definition(cue[2])
+				sounds.append([weapon.shot_sound, 0.0])
+				if cue[3] and weapon.has("shake"):
+					camera.shake(weapon.shake, weapon.get("shake_time", 0.1))
+			"blast":
+				world.blast(cue[1], frame.now)
+				var distance := ToroidalGrid.toroidal_delta_px(frame.focus, cue[1], _terrain.map_size).length()
+				var reach := maxf(WeaponRegistry.blast_definition(cue[2]).radius * 2.5, 400.0)
+				if distance <= reach:
+					camera.shake(CFG.explosion_cam_shake * (1.0 - distance / reach), CFG.explosion_cam_shake_time)
+
+func _compose(sample: Dictionary, now: float, drop: float, walls: Dictionary) -> MatchFrame:
 	var own: Array = sample["local"]
 	var health: Array = sample["health"]
 	frame.begin(now, sample["focus"])
-	if not _health.is_empty() and _health[Actor.LIFE] != health[Actor.LIFE]:
-		reset()
-		frame.cues.append(["reset"])
+	frame.cues.append_array(sample.shots)
 	frame.hit_ratio = 0.0
 	frame.day_minute = preview_minute if preview_minute >= 0.0 else Daylight.minute_at(sample["elapsed"])
 	frame.kills = sample["kills"]
-	frame.wall_changes = walls
 	frame.trajectories = Settings.pvp_show_trajectories
 	frame.radar_players = Settings.pvp_minimap_show_enemy
 	var haste: bool = own[Actor.HASTE_MULT] > 1.0 or sample["time_mode"] == WorldTime.Mode.HASTE
@@ -85,15 +177,7 @@ func compose(sample: Dictionary, now: float, drop: float, walls: Dictionary) -> 
 	_actors = new_actors
 	_health = health
 	_sample_enemies(sample["enemies"], haste, rewind)
-	_sample_objects(sample, own, rewind)
-	var round: Dictionary = sample["round"]
-	if not round.is_empty() and round["tick"] != _round_tick:
-		_round_tick = round["tick"]
-		var data := RoundProjection.round_view(_spec, round)
-		data["grace"] = round["grace"]
-		frame.round = RoundProjection.sample(data, names, _spec.teams, _team_counts, _role, frame.mode)
-	else:
-		frame.round = null
+	_sample_objects(sample, own, rewind, walls)
 	return frame
 
 func _player_pose(id: int, pos: Vector2, velocity: Vector2, row: Array, health: Array,
@@ -152,10 +236,9 @@ func _player_cues(id: int, row: Array, health: Array, pos: Vector2, rewind: bool
 	var mine := id == _role
 	var previous := _health if mine else before
 	if previous[Actor.LIFE] != health[Actor.LIFE]:
+		_splash_after.erase(id)
 		frame.cues.append(["clear_motion", id])
 		return
-	if row[Actor.SHOT_SERIAL] > before[Actor.SHOT_SERIAL]:
-		frame.cues.append(["fire", id, row[Actor.SHOT_TYPE], mine])
 	var damage := int(previous[Actor.HP]) - int(health[Actor.HP])
 	if damage > 0:
 		if mine:
@@ -205,7 +288,7 @@ func _sample_hud(row: Array, health: Array) -> void:
 	frame.ammo = entries[frame.inventory[0] * WeaponInventory.STRIDE + WeaponInventory.CARRIED] if frame.magazine > 0 else -1
 
 func _max_hp(id: int) -> int:
-	return TeamRules.max_hp(_spec.teams.get(id, 0), _team_counts)
+	return TeamRules.max_hp(_spec.teams.get(id, 0), _spec.team_counts)
 
 func _clock(account: Array, rewind: bool, haste: bool) -> void:
 	var clock := frame.clock
@@ -272,7 +355,7 @@ func _motion_cues(id: int, grounded: bool, was_grounded: bool, velocity: Vector2
 	elif not grounded and was_grounded and velocity.y < 0.0:
 		frame.cues.append(["motion", id, &"jump", 0.0])
 
-func _sample_objects(sample: Dictionary, own: Array, rewind: bool) -> void:
+func _sample_objects(sample: Dictionary, own: Array, rewind: bool, walls: Dictionary) -> void:
 	for id: int in sample["projectiles"]:
 		var row: Array = sample["projectiles"][id]
 		frame.projectiles.append([id, row[0], _near(row[1]), row[2]])
@@ -290,8 +373,8 @@ func _sample_objects(sample: Dictionary, own: Array, rewind: bool) -> void:
 				var blast: Array = sample["blasts"][id]
 				frame.cues.append(["blast", blast[CombatSimulator.Blast.POS], blast[CombatSimulator.Blast.TYPE]])
 	_blasts = sample["blasts"]
-	for index: int in frame.wall_changes:
-		if not frame.wall_changes[index] and not rewind:
+	for index: int in walls:
+		if not walls[index] and not rewind:
 			var cell := _terrain.sub_position(index)
 			frame.cues.append(["debris", _terrain.cell_center(cell), _terrain.sub_texture(cell)])
 

@@ -16,9 +16,11 @@ var _span: Vector2i
 var _margin: Vector2
 var _descriptors: PackedInt32Array
 var _wall_rows: Dictionary
+var _shown := PackedByteArray()
 
 func install(map: Dictionary, margin: Vector2) -> void:
 	_span = map.size
+	_shown.resize((_span.x * _span.y + 7) >> 3)
 	_descriptors = map.layers[CyrmMap.SCENE]
 	_margin = margin
 	var water_rows := {}
@@ -47,21 +49,18 @@ func install(map: Dictionary, margin: Vector2) -> void:
 		_paint_wall(index, true)
 	_add_water(water_rows)
 
-func patch(changes: Dictionary) -> void:
-	for index: int in changes:
-		_change_wall(index, changes[index])
-
-func show_walls(previous: PackedByteArray, current: PackedByteArray) -> void:
-	if previous == current:
-		return
+func show_walls(current: PackedByteArray) -> void:
+	if _shown == current: return
 	for i in current.size():
-		var changed := previous[i] ^ current[i]
+		var changed := _shown[i] ^ current[i]
 		if changed == 0:
 			continue
 		for bit in 8:
 			var flag := 1 << bit
 			if changed & flag:
 				_change_wall(i * 8 + bit, not (current[i] & flag))
+
+	_shown = current
 
 func _change_wall(index: int, alive: bool) -> void:
 	_paint_wall(index, alive)

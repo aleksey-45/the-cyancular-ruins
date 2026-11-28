@@ -28,7 +28,7 @@ func start(cell: Vector2i) -> void:
 	if spawn == SpawnPicker.NO_CELL:
 		say.call("地图没有可用起点")
 		return
-	trial = SoloLevel.create(map, spawn, WeaponRegistry.enabled_ids([]))
+	trial = SoloLevel.create(map, spawn, WeaponRegistry.enabled_ids([]), "")
 	trial.preview_minute = canvas.preview_minute
 	canvas.cancel()
 	workspace.hide()

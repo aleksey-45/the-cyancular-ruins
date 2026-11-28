@@ -27,24 +27,44 @@ func _ready() -> void:
 	add_child(_vitals)
 	_build_weapon_display()
 
-func present(frame: MatchFrame, delta: float) -> void:
-	_vitals.present(frame, delta)
-	_kill_count.text = "%03d" % frame.kills
-	_update_weapon_display(frame.inventory)
-	var dropping := frame.drop_progress > 0.0
-	_drop_bar.visible = dropping
-	if dropping:
-		_drop_bar.custom_minimum_size.x = WEAPON_ICON_W * clampf(frame.drop_progress, 0.0, 1.0)
-	if _ammo_label == null:
-		return
-	_ammo_label.visible = frame.magazine > 0
-	if _ammo_label.visible:
-		var low := frame.ammo <= ceili(frame.magazine * 0.25)
-		if low != _ammo_low:
-			_ammo_low = low
-			_ammo_label.add_theme_color_override("font_color",
-					UiDesign.C_WARN if low else UiDesign.C_TEXT)
-		_ammo_label.text = "%d/%d" % [frame.ammo, frame.magazine]
+class State:
+	var hp := 0
+	var capacity := 0
+	var ghost_end := 0
+	var hit_age := 0.0
+	var oxygen_alpha := 0.0
+
+	func advance(frame: MatchFrame, delta: float) -> Dictionary:
+		var health := clampi(frame.health, 0, frame.max_health)
+		if hp != health or capacity != frame.max_health:
+			ghost_end = mini(hp, frame.max_health)
+			hit_age = 0.0
+			hp = health
+			capacity = frame.max_health
+		if ghost_end > hp:
+			hit_age += delta
+			if hit_age >= Vitals.HIT_FLASH + Vitals.HIT_FADE:
+				ghost_end = hp
+		oxygen_alpha = move_toward(oxygen_alpha, 1.0 if frame.oxygen < frame.max_oxygen else 0.0, delta / 0.4)
+		return {"hp": hp, "max_hp": capacity, "ghost_end": ghost_end, "hit_age": hit_age,
+			"oxygen": frame.oxygen, "max_oxygen": frame.max_oxygen, "oxygen_alpha": oxygen_alpha,
+			"kills": frame.kills, "inventory": frame.inventory, "drop": frame.drop_progress,
+			"ammo": "%d/%d" % [frame.ammo, frame.magazine] if frame.magazine > 0 else "",
+			"ammo_low": frame.ammo <= ceili(frame.magazine * 0.25)}
+
+func display(state: Dictionary) -> void:
+	_vitals.state = state
+	_vitals.queue_redraw()
+	_kill_count.text = "%03d" % state.kills
+	_update_weapon_display(state.inventory)
+	_drop_bar.visible = state.drop > 0.0
+	_drop_bar.custom_minimum_size.x = WEAPON_ICON_W * state.drop
+	if _ammo_label != null:
+		_ammo_label.visible = not state.ammo.is_empty()
+		_ammo_label.text = state.ammo
+		if state.ammo_low != _ammo_low:
+			_ammo_low = state.ammo_low
+			_ammo_label.add_theme_color_override("font_color", UiDesign.C_WARN if _ammo_low else UiDesign.C_TEXT)
 
 func _build_weapon_display() -> void:
 	var stack := VBoxContainer.new()
@@ -161,13 +181,7 @@ class Vitals extends Control:
 	const OXYGEN_BACK_ALPHA := 0.16
 	const HIT_FLASH := 0.32
 	const HIT_FADE := 0.2
-	var _hp := 0
-	var _max_hp := 0
-	var _ghost_end := 0
-	var _hit_age := 0.0
-	var _oxygen := 0
-	var _max_oxygen := 0
-	var oxygen_alpha := 0.0
+	var state: Dictionary
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -180,44 +194,23 @@ class Vitals extends Control:
 		offset_right = Hud.MARGIN
 		offset_bottom = Hud.MARGIN
 
-	func present(frame: MatchFrame, delta: float) -> void:
-		var hp := clampi(frame.health, 0, frame.max_health)
-		if hp != _hp or frame.max_health != _max_hp:
-			_ghost_end = mini(_hp, frame.max_health)
-			_hit_age = 0.0
-			_hp = hp
-			_max_hp = frame.max_health
-			queue_redraw()
-		if _ghost_end > _hp:
-			_hit_age += delta
-			if _hit_age >= HIT_FLASH + HIT_FADE:
-				_ghost_end = _hp
-			queue_redraw()
-		var oxygen := frame.oxygen
-		var capacity := frame.max_oxygen
-		var alpha := move_toward(oxygen_alpha, 1.0 if oxygen < capacity else 0.0, delta / 0.4)
-		if alpha != oxygen_alpha or oxygen != _oxygen or capacity != _max_oxygen:
-			oxygen_alpha = alpha
-			_oxygen = oxygen
-			_max_oxygen = capacity
-			queue_redraw()
-
 	func _draw() -> void:
-		var width := _max_hp * HP_STEP - 1.0
+		if state.is_empty(): return
+		var width: float = state.max_hp * HP_STEP - 1.0
 		draw_rect(Rect2(-PAD, Vector2(width, HP_SIZE.y) + PAD * 2.0), UiDesign.C_PLATE)
-		var health_color := UiDesign.C_DANGER if _hp < _max_hp * LOW_RATIO else UiDesign.C_ACCENT
+		var health_color := UiDesign.C_DANGER if state.hp < state.max_hp * LOW_RATIO else UiDesign.C_ACCENT
 		# 刚扣除的生命格先以白色闪烁提示受伤，再逐渐变透明。
-		var flash := 1.0 - absf(fposmod(_hit_age, 0.16) / 0.08 - 1.0) if _hit_age < HIT_FLASH else 0.0
+		var flash := 1.0 - absf(fposmod(state.hit_age, 0.16) / 0.08 - 1.0) if state.hit_age < HIT_FLASH else 0.0
 		var ghost := health_color.lerp(Color.WHITE, flash)
-		ghost.a = 1.0 - clampf((_hit_age - HIT_FLASH) / HIT_FADE, 0.0, 1.0)
-		for i in maxi(_hp, _ghost_end):
-			var color := health_color if i < _hp else ghost
+		ghost.a = 1.0 - clampf((state.hit_age - HIT_FLASH) / HIT_FADE, 0.0, 1.0)
+		for i in maxi(state.hp, state.ghost_end):
+			var color := health_color if i < state.hp else ghost
 			draw_rect(Rect2(Vector2(i * HP_STEP, 0.0), HP_SIZE), color)
-		if oxygen_alpha > 0.0:
-			var size := Vector2(OXYGEN_W * _max_oxygen, OXYGEN_H)
+		if state.oxygen_alpha > 0.0:
+			var size := Vector2(OXYGEN_W * state.max_oxygen, OXYGEN_H)
 			draw_rect(Rect2(OXYGEN_POS - PAD, size + PAD * 2.0),
-					Color(UiDesign.C_PLATE, UiDesign.C_PLATE.a * oxygen_alpha))
+					Color(UiDesign.C_PLATE, UiDesign.C_PLATE.a * state.oxygen_alpha))
 			draw_rect(Rect2(OXYGEN_POS, size),
-					Color(UiDesign.C_WHITE, OXYGEN_BACK_ALPHA * oxygen_alpha))
-			draw_rect(Rect2(OXYGEN_POS, Vector2(OXYGEN_W * _oxygen, size.y)),
-					Color(UiDesign.C_SLOT_FILLED, oxygen_alpha))
+					Color(UiDesign.C_WHITE, OXYGEN_BACK_ALPHA * state.oxygen_alpha))
+			draw_rect(Rect2(OXYGEN_POS, Vector2(OXYGEN_W * state.oxygen, size.y)),
+					Color(UiDesign.C_SLOT_FILLED, state.oxygen_alpha))

@@ -12,15 +12,56 @@ const COLUMNS := {
 	WorldSpec.ROYALE: ["kills", "deaths", "dealt", "taken"],
 }
 
-static func sample(data: Dictionary, names: Dictionary, teams: Dictionary, counts: Dictionary,
-		role: int, mode: String) -> PvpHud.Round:
-	var round := PvpHud.Round.new()
+var _spec: WorldSpec
+var _role: int
+var _tick := -1
+var _round := _empty_round()
+var _age := 0.0
+var _title := ""
+var _punch := 0.0
+var _countdown := 0.0
+
+func _init(spec: WorldSpec, role: int) -> void:
+	_spec = spec
+	_role = role
+
+static func _empty_round() -> Dictionary:
+	return {"score": "", "board": [], "banner": ["", ""], "countdown": -1.0, "remaining": -1.0,
+		"grace": -1.0, "timer": "", "title": "", "subtitle": "", "sections": []}
+
+func advance(state: Dictionary, names: Dictionary, delta: float) -> Dictionary:
+	if not state.is_empty() and state.tick != _tick:
+		_tick = state.tick
+		_round = _project(state, names)
+		_age = 0.0
+		# 服务器的新快照可以缩短仍在进行的倒计时。
+		_countdown = minf(_countdown, _round.countdown) if _countdown > 0.0 else _round.countdown
+	else:
+		_age += delta
+	_countdown = maxf(0.0, _countdown - delta)
+	var title: String = str(maxi(1, ceili(_countdown))) if _round.countdown >= 0.0 else _round.banner[0]
+	_punch = 1.0 if title != _title else maxf(0.0, _punch - delta * Broadcast.PUNCH_DECAY)
+	_title = title
+	var timer: String = _round.timer
+	if _round.remaining >= 0.0:
+		var seconds := int(maxf(0.0, _round.remaining - _age))
+		timer = "剩余时间  %d:%02d" % [seconds / 60, seconds % 60]
+	var grace := ""
+	if _round.grace >= 0.0:
+		grace = "对手掉线中,等待重连… 剩余 %ds" % ceili(maxf(0.0, _round.grace - _age))
+	return {"round": _round, "timer": timer, "grace": grace, "title": title, "punch": _punch}
+
+func _project(state: Dictionary, names: Dictionary) -> Dictionary:
+	var data := round_view(_spec, state)
+	data.grace = state.grace
+	var mode := _spec.mode
+	var round := _empty_round()
 	var stage: int = data["state"]
-	var side := int(teams.get(role, 0)) if mode == WorldSpec.TEAM else role
+	var side := int(_spec.teams.get(_role, 0)) if mode == WorldSpec.TEAM else _role
 	var wins: Dictionary = data["rounds_won"]
 	var series := "局胜 %d - %d" % [wins.get(1, 0), wins.get(2, 0)]
 	if mode == WorldSpec.ROYALE:
-		round.board = _board(data, names, role, stage == Phase.PLAYING)
+		round.board = _board(data, names, _role, stage == Phase.PLAYING)
 	else:
 		if mode == WorldSpec.DUEL:
 			round.grace = data["grace"].get(3 - side, -1.0)
@@ -46,13 +87,13 @@ static func sample(data: Dictionary, names: Dictionary, teams: Dictionary, count
 				var subtitle := series
 				if mode == WorldSpec.TEAM:
 					subtitle = "%s 先到 %d 杀" % ["A 队" if winner == 1 else "B 队",
-							TeamRules.kills_to_win(TeamRules.total_players(counts))]
+							TeamRules.kills_to_win(TeamRules.total_players(_spec.team_counts))]
 				round.banner.assign(["本局胜利!" if winner == side else "本局落败", subtitle])
 		Phase.MATCH_OVER:
-			_finish(round, data, names, teams, side, mode, series)
+			_finish(round, data, names, _spec.teams, side, mode, series)
 	return round
 
-static func _finish(round: PvpHud.Round, data: Dictionary, names: Dictionary, teams: Dictionary,
+static func _finish(round: Dictionary, data: Dictionary, names: Dictionary, teams: Dictionary,
 		side: int, mode: String, series: String) -> void:
 	var winner: int = data["match_winner"]
 	var won := winner == side
@@ -75,7 +116,7 @@ static func _finish(round: PvpHud.Round, data: Dictionary, names: Dictionary, te
 		round.sections.append(_section("对局", UiDesign.C_TEXT, mode, [1, 2], stats, names, mvp))
 
 static func _section(title: String, color: Color, mode: String, roles: Array, stats: Dictionary,
-		names: Dictionary, mvp: int) -> PvpHud.Section:
+		names: Dictionary, mvp: int) -> Dictionary:
 	var key := "acs" if mode == WorldSpec.TEAM else "kills"
 	var player_name := func(role: int) -> String: return names[role]
 	roles.sort_custom(func(a: int, b: int) -> bool:
@@ -88,9 +129,7 @@ static func _section(title: String, color: Color, mode: String, roles: Array, st
 		var deaths_a := int(first["deaths"])
 		var deaths_b := int(second["deaths"])
 		return deaths_a < deaths_b if deaths_a != deaths_b else player_name.call(a) < player_name.call(b))
-	var section := PvpHud.Section.new()
-	section.title = title
-	section.color = color
+	var section := {"title": title, "color": color, "headers": [], "rows": []}
 	var columns: Array = COLUMNS[mode]
 	section.headers = ["#", "昵称"] + columns.map(func(field: String) -> String: return STAT_TITLES[field])
 	for i in roles.size():

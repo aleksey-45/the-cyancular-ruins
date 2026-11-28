@@ -14,7 +14,6 @@ const TILE_EMPTY_ALPHA := 0.55
 const TILE_LIQUID_ALPHA := 0.85
 const TILE_SOLID_ALPHA := 0.95
 
-var _map_size: Vector2
 var _map: Dictionary
 var _mat: ShaderMaterial
 var _view: ColorRect
@@ -22,7 +21,6 @@ var _dots: Dots
 
 func _init(map: Dictionary) -> void:
 	_map = map
-	_map_size = Vector2(map.size * CyrmMap.CELL_SIZE)
 
 func _ready() -> void:
 	layer = 131
@@ -73,24 +71,21 @@ func _ready() -> void:
 	_dots.name = "Markers"
 	add_child(_dots)
 
-func present(frame: MatchFrame) -> void:
-	var pos := frame.focus
-	var canonical := ToroidalGrid.wrap_to_range(pos, _map_size)
-	_mat.set_shader_parameter("center_cell", canonical / float(CyrmMap.CELL_SIZE))
-	_dots.markers.clear()
-	if frame.actors.is_empty():
-		_dots.queue_redraw()
-		return
-	_dots.markers.append([Vector2.ZERO, frame.actors[0].name_color(frame.mode)])
+static func project(frame: MatchFrame, map_size: Vector2) -> Dictionary:
+	var center := ToroidalGrid.wrap_to_range(frame.focus, map_size) / float(CyrmMap.CELL_SIZE)
+	var markers := [[Vector2.ZERO, frame.actors[0].name_color(frame.mode)]]
 	if frame.radar_players:
 		for i in range(1, frame.actors.size()):
 			var pose := frame.actors[i]
-			var offset := ToroidalGrid.toroidal_delta_px(pos, pose.anchor, _map_size) \
-					* (PX_PER_CELL / CyrmMap.CELL_SIZE)
+			var offset := ToroidalGrid.toroidal_delta_px(frame.focus, pose.anchor, map_size) * (PX_PER_CELL / CyrmMap.CELL_SIZE)
 			if offset.length_squared() <= RADIUS_PX * RADIUS_PX:
-				_dots.markers.append([offset, pose.name_color(frame.mode)])
-	_dots.queue_redraw()
+				markers.append([offset, pose.name_color(frame.mode)])
+	return {"center": center, "markers": markers}
 
+func display(state: Dictionary) -> void:
+	_mat.set_shader_parameter("center_cell", state.center)
+	_dots.markers = state.markers
+	_dots.queue_redraw()
 
 class Dots extends Control:
 	const DOT_PX := 8.0

@@ -11,6 +11,9 @@ enum Pose { POS, VEL, STATE }
 
 var render_tick := 0.0
 var _clock := SnapshotClock.new()
+var _shots: Array = []
+var _last_shot := {}
+var _remote_shot_tick := -1
 var _authority: Array[Dictionary] = []
 var _previous: Dictionary
 var _current: Dictionary
@@ -25,13 +28,10 @@ func _init(size: Vector2, role: int) -> void:
 	_map_size = size
 	_role = role
 
-func accept_local(frame: Dictionary) -> void:
-	_previous = frame if _current.is_empty() else _current
-	_current = frame
-
 func accept(update: Dictionary) -> void:
-	_previous = update["previous"]
-	_current = update["current"]
+	var current: Dictionary = update.current
+	_previous = update.get("previous", current if _current.is_empty() else _current)
+	_current = current
 	if update.has("authority"):
 		var packet: Dictionary = update["authority"]
 		var cp: Dictionary = packet["checkpoint"]
@@ -52,6 +52,26 @@ func accept(update: Dictionary) -> void:
 			_replacement = changed
 		elif not _replacement[4]:
 			_replacement = [_replacement[0], _replacement[1], changed[2], changed[3], false]
+
+	var own: Array = current.players[_role]
+	if not _authority.is_empty() and own[Actor.LIFE] != _authority[-1].players[_role][Actor.LIFE]:
+		own = _authority[-1].players[_role]
+	_observe_shot(_role, own, _authority.is_empty() and current.time_mode == WorldTime.Mode.REWIND)
+
+func _observe_shot(id: int, row: Array, rewind := false) -> void:
+	var life: int = row[Actor.LIFE]
+	var serial: int = row[Actor.SHOT_SERIAL]
+	var before: Vector2i = _last_shot.get(id, Vector2i(life, serial))
+	if before.x == life and serial > before.y and not rewind:
+		_shots.append(["fire", id, row[Actor.SHOT_TYPE], id == _role])
+	_last_shot[id] = Vector2i(life, serial if before.x != life or rewind else maxi(before.y, serial))
+
+func _remote_shots(source: Dictionary) -> void:
+	if source.tick <= _remote_shot_tick: return
+	_remote_shot_tick = source.tick
+	for id: int in source.players:
+		if id != _role:
+			_observe_shot(id, source.players[id])
 
 func sample(now: float, alpha: float) -> Dictionary:
 	var delta := now - _last_time if _last_time >= 0.0 else 0.0
@@ -87,12 +107,13 @@ func sample(now: float, alpha: float) -> Dictionary:
 	if not _authority.is_empty():
 		render_tick = _clock.advance(render_tick, _authority[-1]["tick"], delta)
 		while _authority.size() > 2 and _authority[1]["tick"] <= render_tick:
-			_authority.pop_front()
+			_remote_shots(_authority.pop_front())
 		var left := _authority[0]
 		var right := _authority[mini(1, _authority.size() - 1)]
 		var weight := clampf((render_tick - left["tick"]) / maxf(1.0, right["tick"] - left["tick"]), 0.0, 1.0)
 		var ahead := clampf(render_tick - right["tick"], 0.0, SnapshotClock.MAX_EXTRAPOLATION)
 		var source := left if weight < 1.0 else right
+		_remote_shots(source)
 		players = _sample_players(source, right, weight, ahead)
 		projectiles.merge(_sample_projectiles(source, left, right, weight, ahead, true))
 		pickups = _sample_pickups(source, right, weight, ahead)
@@ -108,7 +129,9 @@ func sample(now: float, alpha: float) -> Dictionary:
 		round = source
 	else:
 		players = _sample_players(_current, _current, 0.0, 0.0)
-	return {"local": own, "health": authoritative, "focus": focus, "players": players,
+	var shots := _shots
+	_shots = []
+	return {"shots": shots, "local": own, "health": authoritative, "focus": focus, "players": players,
 		"projectiles": projectiles, "beams": beams, "blasts": blasts, "pickups": pickups,
 		"pickup_tick": pickup_tick, "combat_tick": combat_tick, "remote_tick": delayed_tick,
 		"time_mode": _current["time_mode"], "account": _current["account"], "elapsed": light_time,

@@ -40,7 +40,8 @@ const HP_BAR_CENTER := Vector2(0.0, -108.0)
 
 enum Effect { BLAST, PARTICLES, NUMBER, GRAIN }
 
-var _canvas: WorldCanvas
+var textures := WorldDrawing.Textures.new()
+var _canvas: WorldDrawing
 var _size: Vector2
 var _squash := {}
 var _after := AfterImageField.new()
@@ -54,37 +55,14 @@ var _paths := {}
 var _next_paths := {}
 var _effects := [[], [], [], []]
 var _hits := {}
-# 按需创建拾取提示和敌人血条，后续帧复用已创建的节点。
-var _pickup_nodes: Array[PickupPrompt] = []
-var _reload_node: ReloadRing
-var _hp_nodes: Array[EnemyHpBar] = []
 
-func bind(canvas: WorldCanvas, size: Vector2) -> void:
-	_canvas = canvas
+func _init(size: Vector2) -> void:
 	_size = size
 
-func reset() -> void:
-	for buffer in [_poses, _fire, _paths, _next_paths, _hits] + _effects:
-		buffer.clear()
-	_squash.clear()
-	_after.clear()
-	_ghost_after.clear()
-	_hit_prev.clear()
-	_downed_prev.clear()
-	_alternate = false
-	# 重开时也重置世界内提示，避免上一局的提示残留。
-	for node in _pickup_nodes:
-		if is_instance_valid(node):
-			node.hide()
-	if is_instance_valid(_reload_node):
-		_reload_node.hide()
-	for node in _hp_nodes:
-		if is_instance_valid(node):
-			node.hide()
-
 func clear_motion(id: int) -> void:
-	_squash.erase(id)
-	_ghost_after.erase(id)
+	for state in [_poses, _fire, _squash, _ghost_after, _hit_prev, _downed_prev]:
+		state.erase(id)
+	_after.clear_actor(id)
 
 func motion(id: int, kind: StringName, now: float, speed := 0.0) -> void:
 	_squash_for(id).impulse(kind, now, speed)
@@ -122,15 +100,11 @@ func hit(id: int, at: Vector2, damage: int, own: bool) -> void:
 func grain(at: Vector2, now: float, flight: float) -> void:
 	_effects[Effect.GRAIN].append([at, now, flight])
 
-func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
-	_canvas.set_daylight(frame.day_minute)
-	_canvas.begin(frame.actors.size())
+func build(frame: MatchFrame, grain_target := Vector2.ZERO) -> Dictionary:
+	_canvas = WorldDrawing.new(textures)
+	_canvas.data.minute = frame.day_minute
+	_canvas.data.actors = frame.actors.size()
 	_after.present(frame.now, frame.focus, _canvas, _size)
-	# 上一帧的换弹环先隐藏，由当前帧的换弹状态决定是否显示。
-	if is_instance_valid(_reload_node):
-		_reload_node.hide()
-	var prompts := 0
-	var bars := 0
 	for i in frame.actors.size():
 		var pose := frame.actors[i]
 		_actor(pose, frame)
@@ -141,11 +115,7 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 		if not pose.name.is_empty():
 			_nameplate(pose.anchor, pose.name, pose.name_color(frame.mode))
 			if pose.health >= 0.0:
-				var bar := _hp_bar(bars)
-				bar.position = pose.anchor + HP_BAR_CENTER
-				bar.ratio = pose.health
-				bar.show()
-				bars += 1
+				_canvas.data.bars.append([pose.anchor + HP_BAR_CENTER, pose.health])
 	for row in frame.pickups:
 		var weapon := WeaponRegistry.definition(row[0])
 		var bounds: Rect2 = weapon["pickup_bounds"]
@@ -154,12 +124,7 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 		_canvas.sprite(WEAPONS, weapon["region"],
 				Transform2D(0.0, Vector2.ONE * size, 0.0, at - bounds.get_center() * size))
 		if row[2]:
-			_show_pickup_prompt(prompts, at)
-			prompts += 1
-	for i in range(prompts, _pickup_nodes.size()):
-		_pickup_nodes[i].hide()
-	for i in range(bars, _hp_nodes.size()):
-		_hp_nodes[i].hide()
+			_canvas.data.prompts.append([at + Vector2.UP * PickupPrompt.GAP_ABOVE, Settings.get_binding_names("F")])
 	_next_paths.clear()
 	for row in frame.projectiles:
 		if frame.trajectories:
@@ -169,7 +134,7 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 	_paths = _next_paths
 	_next_paths = previous
 	_draw_effects(frame, grain_target)
-	_canvas.submit()
+	return _canvas.data
 
 func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	var now := frame.now
@@ -198,12 +163,12 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	var tint := Color.WHITE
 	var color := Color.WHITE
 	var glow := Color.TRANSPARENT
-	var pass_kind := WorldCanvas.Pass.NORMAL
+	var pass_kind := WorldDrawing.Pass.NORMAL
 	if enemy:
 		if pose.hit_left > 0.0 or pose.state == Activity.TELEPORT:
 			color = Color(3, 3, 3)
 			if pose.black_bird:
-				pass_kind = WorldCanvas.Pass.MASK
+				pass_kind = WorldDrawing.Pass.MASK
 		if not pose.downed:
 			if pose.elite and (pose.haste or pose.rewind):
 				glow = ELITE_GLOW
@@ -216,14 +181,14 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		var hit_left := pose.hit_left
 		var alpha := 0.4 if hit_left > 0.0 and int(hit_left * 20.0) % 2 == 0 else 1.0
 		color = Color(skin_tint, alpha)
-		pass_kind = WorldCanvas.Pass.PLAYER_BODY
-		_canvas.eye_light(visual.translated_local(image.get_meta(&"eye_offset")))
+		pass_kind = WorldDrawing.Pass.PLAYER_BODY
+		_canvas.data.eyes.append(visual.translated_local(image.get_meta(&"eye_offset")))
 		if pose.haste and not pose.rewind:
 			glow = Color((ENEMY_GLOW if pose.remote else PLAYER_GLOW) * tint, alpha)
 	_afterimages(pose, frame, image, visual, tint)
 	_canvas.sprite(image.atlas if enemy else PLAYER_SURFACE, image.region, visual, color, pass_kind)
 	if glow.a > 0.0:
-		_canvas.sprite(image.atlas, image.region, visual, glow, WorldCanvas.Pass.GLOW)
+		_canvas.sprite(image.atlas, image.region, visual, glow, WorldDrawing.Pass.GLOW)
 	if pose.weapon == 0:
 		return
 	var weapon := WeaponRegistry.definition(pose.weapon)
@@ -246,7 +211,7 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	if drawing:
 		_draw_bow(weapon, aim, pose.bow_draw, now, color.a)
 	if reload >= 0.0 and not pose.remote:
-		_reload(pose.anchor, reload, pose.reload_left)
+		_canvas.data.reload = [pose.anchor + Vector2(0, 96), reload, pose.reload_left]
 
 func _draw_bow(weapon: Dictionary, aim: Transform2D, charge: float, now: float, alpha: float) -> void:
 	var center := aim * ShotRules.launch_offset(weapon, charge)
@@ -276,22 +241,22 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 		visual: Transform2D, tint: Color) -> void:
 	var now := frame.now
 	var enemy := pose.frames != null
-	var was_downed := bool(_downed_prev.get(pose.id, false))
+	var was_downed := bool(_downed_prev.get(pose.id, pose.downed))
 	_downed_prev[pose.id] = pose.downed
 	if pose.downed:
 		if not was_downed:
-			_after.spawn(now, image, visual, DEATH_GHOST,
-					WorldCanvas.Pass.NORMAL, DEATH_GHOST_LIFE)
+			_after.spawn(pose.id, now, image, visual, DEATH_GHOST,
+					WorldDrawing.Pass.NORMAL, DEATH_GHOST_LIFE)
 		return
 	if not enemy:
 		var hit_left := pose.hit_left
-		var was_hit := bool(_hit_prev.get(pose.id, false))
+		var was_hit := bool(_hit_prev.get(pose.id, hit_left > 0.0))
 		_hit_prev[pose.id] = hit_left > 0.0
 		if hit_left > 0.0 and not was_hit:
-			_after.spawn(now, image, visual, HURT_GHOST,
-					WorldCanvas.Pass.NORMAL, HURT_GHOST_LIFE)
+			_after.spawn(pose.id, now, image, visual, HURT_GHOST,
+					WorldDrawing.Pass.NORMAL, HURT_GHOST_LIFE)
 	var color := Color.WHITE
-	var pass_kind := WorldCanvas.Pass.NORMAL
+	var pass_kind := WorldDrawing.Pass.NORMAL
 	var interval := 0.0
 	var life := TRAIL_LIFE
 	var alternate := false
@@ -311,7 +276,7 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 			interval = HASTE_GHOST_INTERVAL
 		elif foreground:
 			color = UiDesign.C_TEXT_DIM
-			pass_kind = WorldCanvas.Pass.FOREGROUND
+			pass_kind = WorldDrawing.Pass.FOREGROUND
 			interval = REWIND_GHOST_INTERVAL
 		elif pose.state == Player.DASH:
 			color = UiDesign.C_TEAM_A * tint
@@ -326,11 +291,12 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 		color = HASTE_GHOST_WARM if _alternate else HASTE_GHOST_COOL
 		_alternate = not _alternate
 	_ghost_after[pose.id] = now + interval
-	_after.spawn(now, image, visual, color, pass_kind, life)
+	_after.spawn(pose.id, now, image, visual, color, pass_kind, life)
 
 func _trajectory(id: int, at: Vector2) -> void:
 	var path: PackedVector2Array = _paths.get(id, PackedVector2Array())
 	if not path.is_empty():
+		path = path.duplicate() # 上一帧的折线仍可能被录像引用。
 		var shift := ToroidalGrid.anchor_to_nearest(path[-1], at, _size) - path[-1]
 		if shift != Vector2.ZERO:
 			for i in path.size():
@@ -342,22 +308,6 @@ func _trajectory(id: int, at: Vector2) -> void:
 	if path.size() > 1:
 		_canvas.line(path, Color(1, 1, 1, 0.55), 2.5)
 
-func _show_pickup_prompt(index: int, at: Vector2) -> void:
-	var node := _pickup_prompt_node(index)
-	node.position = at + Vector2(0.0, -PickupPrompt.GAP_ABOVE)
-	node.show()
-
-
-func _pickup_prompt_node(index: int) -> PickupPrompt:
-	while _pickup_nodes.size() <= index:
-		var node := PickupPrompt.new()
-		node.name = "PickupPrompt%d" % _pickup_nodes.size()
-		_canvas.overlay_layer.add_child(node)
-		_pickup_nodes.append(node)
-	return _pickup_nodes[index]
-
-
-# 提示跟随视口，沿用世界坐标，绘制在角色上方且不受昼夜环境色调制。
 func _draw_effects(frame: MatchFrame, grain_target: Vector2) -> void:
 	var now := frame.now
 	for hit_row: Array in _hits.values():
@@ -422,15 +372,6 @@ func _nameplate(at: Vector2, name: String, color: Color) -> void:
 	_canvas.text_at(name, at + Vector2(0, -78), Color(color, 0.85), true)
 
 
-func _hp_bar(index: int) -> EnemyHpBar:
-	while _hp_nodes.size() <= index:
-		var node := EnemyHpBar.new()
-		node.name = "EnemyHpBar%d" % _hp_nodes.size()
-		node.z_index = 100
-		_canvas.overlay_layer.add_child(node)
-		_hp_nodes.append(node)
-	return _hp_nodes[index]
-
 func _guide(points: PackedVector2Array, color: Color, explosive: bool, overlay: bool) -> void:
 	if points.size() < 2:
 		return
@@ -438,15 +379,6 @@ func _guide(points: PackedVector2Array, color: Color, explosive: bool, overlay: 
 	if explosive:
 		_canvas.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16), true)
 		_canvas.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48), true)
-
-func _reload(at: Vector2, progress: float, remaining: float) -> void:
-	if not is_instance_valid(_reload_node):
-		_reload_node = ReloadRing.new()
-		_reload_node.name = "ReloadRing"
-		_canvas.overlay_layer.add_child(_reload_node)
-	_reload_node.position = at + Vector2(0, 96)
-	_reload_node.set_progress(progress, remaining)
-	_reload_node.show()
 
 func _draw_particles(style: Dictionary, color: Color, age: float, at: Vector2) -> void:
 	var count: int = style["count"]

@@ -40,10 +40,25 @@ var _marker := Control.new()
 var _kill_label := RichTextLabel.new()
 var _streak_label: Label
 var _skull := Control.new()
-var _now := 0.0
-var _hit_at := -HIT_LIFE
-var _kill_at := -STREAK_RESET
-var _streak := 0
+class State:
+	var now := 0.0
+	var hit_at := -HIT_LIFE
+	var kill_at := -STREAK_RESET
+	var streak := 0
+	var name := ""
+
+	func kill(who: String) -> void:
+		streak = 1 if now - kill_at > STREAK_RESET else streak + 1
+		kill_at = now
+		name = who
+
+	func advance(delta: float) -> Dictionary:
+		now += delta
+		var age := now - kill_at
+		return {"hit": minf(1.0, (now - hit_at) / HIT_LIFE), "name": name, "streak": streak,
+			"alpha": clampf(minf(age / 0.08, (KILL_LIFE - age) / 0.35), 0.0, 1.0),
+			"scale": 1.0 + 0.22 * maxf(0.0, 1.0 - age / 0.14)}
+
 var _hit_progress := 1.0
 
 
@@ -120,39 +135,21 @@ func _ready() -> void:
 	row.add_child(_streak_label)
 
 
-func show_hit() -> void:
-	_hit_at = _now
-
-
-func reset_streak() -> void:
-	_streak = 0
-
-
-func show_kill(who: String) -> void:
-	_streak = 1 if _now - _kill_at > STREAK_RESET else _streak + 1
-	_kill_at = _now
-	# 去掉昵称中的左方括号，防止被解释为 BBCode 标签。
-	_kill_label.text = "击杀 [color=#%s]%s[/color]" % [
-			UiDesign.C_GOLD.to_html(false), who.replace("[", "")]
-	_streak_label.text = "x%d" % _streak
-	Sfx.play("kill")
-
-
-func _process(delta: float) -> void:
-	_now += delta
-	_hit_progress = minf(1.0, (_now - _hit_at) / HIT_LIFE)
+func display(state: Dictionary) -> void:
+	_hit_progress = state.hit
 	_marker.visible = _hit_progress < 1.0
 	if _marker.visible:
 		_marker.queue_redraw()
-	var age := _now - _kill_at
-	var alpha := clampf(minf(age / 0.08, (KILL_LIFE - age) / 0.35), 0.0, 1.0)
-	_skull.visible = alpha > 0.0
-	var scale_factor := 1.0 + 0.22 * maxf(0.0, 1.0 - age / 0.14)
+	var active: bool = state.alpha > 0.0
 	for item: Control in [_kill_label, _streak_label, _skull]:
-		item.modulate.a = alpha
+		item.visible = active
+	if not active: return
+	_kill_label.text = "击杀 [color=#%s]%s[/color]" % [UiDesign.C_GOLD.to_html(false), state.name.replace("[", "")]
+	_streak_label.text = "x%d" % state.streak
+	for item: Control in [_kill_label, _streak_label, _skull]:
+		item.modulate.a = state.alpha
 		item.pivot_offset = item.size * 0.5
-		item.scale = Vector2.ONE * scale_factor
-
+		item.scale = Vector2.ONE * state.scale
 
 func _draw_hit() -> void:
 	var center := _marker.size * 0.5
